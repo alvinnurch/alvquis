@@ -2,16 +2,16 @@ import {
   configured, auth, db, authReady, GoogleAuthProvider, signInWithPopup, signOut,
   doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
   serverTimestamp, writeBatch, query, where, increment, Timestamp, getCountFromServer,
-} from "./fb.js?v=2026.10.01-r4";
-import * as CFG from "./firebase-config.js?v=2026.10.01-r4";
+} from "./fb.js?v=2026.10.01-r5";
+import * as CFG from "./firebase-config.js?v=2026.10.01-r5";
 const ADMIN_EMAILS = Array.isArray(CFG.ADMIN_EMAILS) ? CFG.ADMIN_EMAILS : [];
-import { esc, shape, toast, LETTERS, OPT_CLASS, pointsFor, fmtDate, setupNotice } from "./ui.js?v=2026.10.01-r4";
-import { SAMPLE_QUIZ, SAMPLE_KIDS } from "./sample-quiz.js?v=2026.10.01-r4";
-import { THEMES, THEME_KEYS, themeOf, arena, avatar, gameState } from "./themes.js?v=2026.10.01-r4";
-import { Sound } from "./sound.js?v=2026.10.01-r4";
-import { VERSION } from "./version.js?v=2026.10.01-r4";
-import { isChoice, isCorrect, publicQ, solutionList, newSalt } from "./qtypes.js?v=2026.10.01-r4";
-import { stageSeq, stageSolution } from "./qwidgets.js?v=2026.10.01-r4";
+import { esc, shape, toast, LETTERS, OPT_CLASS, pointsFor, fmtDate, setupNotice } from "./ui.js?v=2026.10.01-r5";
+import { SAMPLE_QUIZ, SAMPLE_KIDS } from "./sample-quiz.js?v=2026.10.01-r5";
+import { THEMES, THEME_KEYS, themeOf, arena, avatar, gameState } from "./themes.js?v=2026.10.01-r5";
+import { Sound } from "./sound.js?v=2026.10.01-r5";
+import { VERSION } from "./version.js?v=2026.10.01-r5";
+import { isChoice, isCorrect, publicQ, solutionList, newSalt } from "./qtypes.js?v=2026.10.01-r5";
+import { stageSeq, stageSolution } from "./qwidgets.js?v=2026.10.01-r5";
 // Firestore tidak menerima array di dalam array: pasangan disimpan sebagai {l, r}.
 const normQ = (q) => (q.kind === "cocok" && q.pairs?.length && !Array.isArray(q.pairs[0]) ? { ...q, pairs: q.pairs.map((p) => [p.l, p.r]) } : q);
 
@@ -430,7 +430,7 @@ function startDialog(quiz) {
     try {
       const pin = await createSession(quiz, mode, opts);
       if (mode === "live") openStage(pin);
-      else { tab = "sesi"; rekapPin = pin; draft = null; render(); toast(`Ujian mandiri dibuka. PIN ${pin}`, 5000); }
+      else { tab = "sesi"; rekapPin = pin; draft = null; render(); openPinScreen(pin); }
     } catch (e) { console.error(e); toast("Gagal membuat sesi: " + (e.code || e.message)); }
   };
   $dlg.showModal();
@@ -525,6 +525,7 @@ async function renderRekap(pin) {
         ${s.mode === "mandiri" ? `<button class="btn" id="toggle">${s.status === "open" ? "Tutup ujian" : "Buka lagi"}</button>
           <button class="btn gold" id="publish">${s.resultsPublished ? "Perbarui nilai" : "Simpan &amp; umumkan nilai"}</button>` : ""}
         ${s.mode === "live" && s.status !== "ended" ? `<button class="btn primary" id="stage">Buka panggung</button>` : ""}
+        ${s.mode === "mandiri" && s.status === "open" ? `<button class="btn primary" id="pinscreen">Tampilkan PIN di layar</button>` : ""}
         <button class="btn" id="csv" ${rows.length ? "" : "disabled"}>Unduh CSV</button>
         <button class="btn danger" id="del">Hapus sesi</button>
       </div>
@@ -562,6 +563,7 @@ async function renderRekap(pin) {
 
   $view.querySelector("#back").onclick = () => { rekapPin = null; render(); };
   $view.querySelector("#stage")?.addEventListener("click", () => openStage(pin));
+  $view.querySelector("#pinscreen")?.addEventListener("click", () => openPinScreen(pin));
   $view.querySelector("#csv").onclick = () => downloadCSV(s, Q, rows, salt);
   $view.querySelector("#del").onclick = async () => {
     if (!(await ask("Hapus sesi ini beserta seluruh jawaban dan nilainya? Unduh CSV dulu bila perlu.", "Hapus permanen", true))) return;
@@ -652,6 +654,7 @@ async function openStage(pin) {
   }, lost));
 }
 function closeStage() {
+  PS.unsub?.(); PS.unsub2?.(); PS.unsub = PS.unsub2 = null; PS.pin = null;
   H.unsubs.forEach((f) => f()); H.unsubs = []; H.ansUnsub?.(); H.ansUnsub = null;
   clearInterval(H.tick); H.tick = null; H.s = null; H.revealing = false;
   Sound.stop();
@@ -675,6 +678,49 @@ function soundFor(s, players, force) {
   const gs = players.map((p) => gameState(p, s));
   Sound.phase(themeOf(s), s.status, s.current, { anyOut: gs.some((g) => g.justOut), anyHit: gs.some((g) => g.justHit), anyRight: gs.some((g) => g.justRight) });
 }
+/* ---------------------------------------------------------------- layar PIN ujian mandiri */
+// Tampilan besar untuk proyektor: PIN, kode QR, dan jumlah mahasiswa yang sudah mulai / mengumpulkan.
+const PS = { pin: null, unsub: null, unsub2: null, s: null, subs: [] };
+function openPinScreen(pin) {
+  closeStage();
+  PS.pin = pin; PS.s = null; PS.subs = [];
+  $stage.hidden = false; document.body.style.overflow = "hidden";
+  $stage.innerHTML = `<p>Memuat…</p>`;
+  PS.unsub = onSnapshot(doc(db, "sessions", pin), (snap) => { PS.s = snap.data() || null; drawPinScreen(); },
+    (e) => toast("Gagal memuat sesi: " + (e.code || e.message)));
+  PS.unsub2 = onSnapshot(collection(db, "sessions", pin, "submissions"), (snap) => {
+    PS.subs = snap.docs.map((d) => d.data());
+    const a = $stage.querySelector("#ps-start"), b = $stage.querySelector("#ps-done");
+    if (a && b) { a.textContent = PS.subs.length; b.textContent = PS.subs.filter((x) => x.status === "submitted").length; }
+  }, (e) => console.error(e));
+}
+function drawPinScreen() {
+  const s = PS.s, pin = PS.pin; if (!pin) return;
+  if (!s) { $stage.innerHTML = `<p>Sesi tidak ditemukan.</p>`; return; }
+  const url = joinUrl(), open = s.status === "open";
+  $stage.innerHTML = `<div class="stage-top">
+      <div class="stage-title">${esc(s.title)} · Ujian mandiri</div>
+      <div class="row"><button class="btn sm" id="fs">Layar penuh</button><button class="btn sm" id="x">Tutup layar</button></div>
+    </div>
+    <div class="stage-body"><div class="lobby">
+      ${open ? `<div class="joinbox">
+        ${window.QRCode ? `<div id="qr" aria-label="Kode QR untuk masuk ujian"></div>` : ""}
+        <div class="stack tight" style="text-align:left"><div class="url">Buka <b>${esc(url.replace(/^https?:\/\//, "").replace(/\/$/, ""))}</b></div><div>lalu masukkan PIN</div><div class="pin">${esc(pin)}</div></div>
+      </div>
+      <p style="opacity:.85;font-size:clamp(16px,2vw,22px)">${s.total || s.questions?.length || 0} soal · ${s.durationMin} menit per mahasiswa${s.deadline ? ` · ditutup ${esc(fmtDate(s.deadline))}` : ""}</p>`
+      : `<div class="bigcount">Ujian ditutup</div>`}
+      <div class="ps-stats">
+        <div><div class="bigcount" id="ps-start">${PS.subs.length}</div><div>sudah mulai</div></div>
+        <div><div class="bigcount" id="ps-done">${PS.subs.filter((x) => x.status === "submitted").length}</div><div>sudah mengumpulkan</div></div>
+      </div>
+    </div></div>
+    <div class="stage-foot"><span class="small" style="opacity:.8">Mahasiswa mengerjakan di HP masing-masing. Layar ini boleh ditutup kapan saja.</span><button class="btn light" id="rekap">Lihat rekap nilai</button></div>`;
+  if (open && window.QRCode) { try { new QRCode($stage.querySelector("#qr"), { text: url + "?pin=" + pin, width: 160, height: 160, colorDark: "#15201b", colorLight: "#f4f7f2" }); } catch {} }
+  $stage.querySelector("#x").onclick = () => { closeStage(); if (rekapPin === pin && tab === "sesi") renderRekap(pin); };
+  $stage.querySelector("#fs").onclick = () => (document.fullscreenElement ? document.exitFullscreen() : $stage.requestFullscreen?.())?.catch?.(() => toast("Layar penuh tidak tersedia di peramban ini"));
+  $stage.querySelector("#rekap").onclick = () => { closeStage(); tab = "sesi"; rekapPin = pin; draft = null; render(); };
+}
+
 function joinUrl() {
   const u = new URL("./", location.href); return u.href;
 }

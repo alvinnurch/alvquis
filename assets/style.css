@@ -519,3 +519,7 @@ tr:last-child td { border-bottom: 0; }
 .admin-table td, .admin-table th { white-space: normal; vertical-align: middle; }
 .admin-table td.mono.small { word-break: break-all; }
 .admin-table td:last-child { white-space: nowrap; }
+
+/* ---------- layar PIN ujian mandiri ---------- */
+.ps-stats { display: flex; gap: clamp(24px, 6vw, 96px); justify-content: center; text-align: center; flex-wrap: wrap; }
+.ps-stats > div > div:last-child { opacity: .8; font-size: clamp(14px, 1.6vw, 20px); margin-top: 6px; }

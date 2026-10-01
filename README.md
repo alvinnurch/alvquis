@@ -338,3 +338,15 @@ Artinya beberapa kelas per hari masih aman. Pemakaian bisa dipantau di Firebase 
 | `firestore.rules` | Aturan keamanan yang ditempel di Firebase (langkah A5) |
 | `assets/sample-quiz.js` | Contoh 10 soal Hadis dan Teknologi |
 | `assets/*.js`, `assets/style.css` | Kode aplikasi dan tampilan (tidak perlu diubah) |
+
+## J. Memakai domain sendiri (mis. kuis.islamiinstitute.my.id)
+
+1. **Firebase Console → Authentication → Settings → Authorized domains → Add domain**: tambahkan domain Anda (tanpa `http://`). Tanpa ini, tombol "Lanjut dengan Google" di halaman dosen gagal (`auth/unauthorized-domain`).
+2. **GitHub → repo → Settings → Pages**: tunggu sampai tulisan sertifikat selesai, lalu centang **Enforce HTTPS**. Selama masih `http://`, peramban menandai situs "Tidak aman", dan sebagian HP/jaringan kampus memperlakukannya lebih ketat.
+3. Bagikan alamat baru ke mahasiswa. Alamat lama `….github.io/alvquis` otomatis dialihkan.
+
+> Catatan: mahasiswa yang sudah masuk lewat alamat lama lalu pindah ke alamat baru dianggap perangkat baru (harus masuk PIN lagi). Hindari mengganti domain di tengah sesi.
+
+## K. Bila HP mahasiswa tertinggal soal
+
+Sejak versi r5, HP memakai koneksi yang lebih tahan terhadap jaringan kampus/operator seluler, dan setiap beberapa detik memeriksa sendiri ke server bila tidak menerima kabar. HP yang tertinggal akan menyusul sendiri dalam ±5–10 detik, termasuk setelah layar HP dimatikan lalu dinyalakan lagi. Bila tetap macet, minta mahasiswa memuat ulang halaman (jawaban dan skornya tidak hilang).

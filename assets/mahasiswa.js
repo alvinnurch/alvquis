@@ -1,12 +1,12 @@
 import {
   configured, auth, db, authReady, signInAnonymously,
-  doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, deleteField,
-} from "./fb.js?v=2026.10.01-r4";
-import { esc, shape, toast, LETTERS, OPT_CLASS, shuffledIdx, fmtDate, mmss, setupNotice } from "./ui.js?v=2026.10.01-r4";
-import { THEMES, themeOf, avatar, avatarPicker, meWidget, themedFeedback } from "./themes.js?v=2026.10.01-r4";
-import { isChoice } from "./qtypes.js?v=2026.10.01-r4";
-import { VERSION } from "./version.js?v=2026.10.01-r4";
-import { mountSeq, solutionInline } from "./qwidgets.js?v=2026.10.01-r4";
+  getDocFromServer, doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, deleteField,
+} from "./fb.js?v=2026.10.01-r5";
+import { esc, shape, toast, LETTERS, OPT_CLASS, shuffledIdx, fmtDate, mmss, setupNotice } from "./ui.js?v=2026.10.01-r5";
+import { THEMES, themeOf, avatar, avatarPicker, meWidget, themedFeedback } from "./themes.js?v=2026.10.01-r5";
+import { isChoice } from "./qtypes.js?v=2026.10.01-r5";
+import { VERSION } from "./version.js?v=2026.10.01-r5";
+import { mountSeq, solutionInline } from "./qwidgets.js?v=2026.10.01-r5";
 
 window.__alvOK = true;
 const $view = document.getElementById("view");
@@ -38,7 +38,7 @@ function setView(html, center = false) {
   $view.className = "m-main" + (center ? " center" : "");
   $view.innerHTML = html;
 }
-function stopAll() { unsubs.forEach((f) => f()); unsubs = []; clearInterval(tick); tick = null; }
+function stopAll() { unsubs.forEach((f) => f()); unsubs = []; clearInterval(tick); tick = null; clearInterval(watchdog); watchdog = null; }
 
 /* ---------------------------------------------------------------- join */
 function renderJoin(prefill, err) {
@@ -57,11 +57,14 @@ function renderJoin(prefill, err) {
     e.preventDefault();
     const p = inp.value.trim();
     if (!/^\d{6}$/.test(p)) return renderJoin(p, "PIN harus 6 angka.");
-    const snap = await getDoc(doc(db, "sessions", p)).catch(() => null);
+    const btn = $view.querySelector("#f button"); btn.disabled = true; btn.textContent = "Memeriksa PIN…";
+    let snap;
+    try { snap = await withTimeout(getDoc(doc(db, "sessions", p)), 15000); }
+    catch (er) { console.error(er); return renderJoin(p, er.code === "timeout" ? "Koneksi lambat, server belum menjawab. Periksa internet lalu tekan Masuk lagi." : `Tidak bisa membuka sesi (${er.code || er.message}). Coba lagi.`); }
     if (!snap?.exists()) return renderJoin(p, "PIN tidak ditemukan. Periksa lagi angkanya.");
     pin = p; S = snap.data();
     const mineRef = S.mode === "live" ? doc(db, "sessions", pin, "players", uid) : doc(db, "sessions", pin, "submissions", uid);
-    const mine = await getDoc(mineRef).catch(() => null);
+    const mine = await withTimeout(getDoc(mineRef), 10000).catch(() => null);
     if (mine?.exists()) return S.mode === "live" ? startLive() : startMandiri();
     if (S.mode === "live" && S.status === "ended") return renderJoin(p, "Kuis ini sudah selesai.");
     if (S.mode === "mandiri" && !isOpen(S)) return renderJoin(p, "Ujian ini sudah ditutup.");
@@ -99,11 +102,12 @@ function renderIdentity() {
       } else {
         renderIntro(name, nim);
       }
-    } catch (err) { toast("Gagal bergabung. Mungkin sesi sudah ditutup."); console.error(err); }
+    } catch (err) { toast(`Gagal bergabung (${err.code || err.message}). Mungkin sesi sudah ditutup.`, 6000); console.error(err); }
   };
 }
 
 /* ================================================================ LIVE */
+let watchdog = null, lastSnapAt = 0, checking = false;
 let P = null, myAns = {}, qSeenAt = 0, lastQ = -1, sig = "", joinMid = null, offset = null, retry = null, revealWait = null, revealTimer = null;
 
 // Selisih jam HP dengan jam server Firebase, diukur dari cap waktu saat bergabung.
@@ -127,19 +131,68 @@ function startLive() {
     stopAll(); retry = setTimeout(startLive, 3000);
   };
   unsubs.push(onSnapshot(doc(db, "sessions", pin), (s) => {
-    S = s.data(); if (!S) return renderJoin("", "Sesi telah dihapus oleh dosen.");
-    if (needsUpdate(S)) return;
-    if (S.status === "question" && S.current !== lastQ) { lastQ = S.current; qSeenAt = Date.now(); }
-    renderLive();
+    lastSnapAt = Date.now();
+    const d = s.data(); if (!d) return renderJoin("", "Sesi telah dihapus oleh dosen.");
+    applySession(d);
   }, lost));
-  unsubs.push(onSnapshot(doc(db, "sessions", pin, "players", uid), (s) => {
-    P = s.data() || null; $who.textContent = P ? `${P.name} · ${(P.score || 0).toLocaleString("id-ID")}` : "";
-    if (P?.joinedAt?.toMillis && joinMid != null) {   // baru saja bergabung: ukur selisih jam sekarang
-      offset = P.joinedAt.toMillis() - joinMid; joinMid = null; store.set("off:" + pin, offset);
-    }
-    renderLive();
-  }, lost));
+  unsubs.push(onSnapshot(doc(db, "sessions", pin, "players", uid), (s) => applyPlayer(s.data() || null), lost));
+  // Penjaga: bila koneksi langsung ke server diam-diam macet, ambil keadaan terbaru langsung dari server.
+  lastSnapAt = Date.now();
+  watchdog = setInterval(checkLive, 4000);
 }
+
+// Urutan tahap kuis. Dosen tidak pernah mundur, jadi data yang "lebih tua" (dari cache) diabaikan.
+function stageRank(x) {
+  if (!x) return -1;
+  if (x.status === "ended") return 1e9;
+  const st = { lobby: 0, question: 1, reveal: x.counts != null ? 3 : 2, leaderboard: 4 }[x.status] ?? 0;
+  return (x.current ?? -1) * 10 + st + 10;
+}
+function applySession(d) {
+  if (S && S.pin === d.pin && stageRank(d) < stageRank(S)) return;   // data basi
+  S = d;
+  if (needsUpdate(S)) return;
+  if (S.status === "question" && S.current !== lastQ) { lastQ = S.current; qSeenAt = Date.now(); }
+  renderLive();
+}
+function applyPlayer(d) {
+  if (P && d && (d.lastQ ?? -1) < (P.lastQ ?? -1)) return;            // data basi
+  P = d; $who.textContent = P ? `${P.name} · ${(P.score || 0).toLocaleString("id-ID")}` : "";
+  if (P?.joinedAt?.toMillis && joinMid != null) {   // baru saja bergabung: ukur selisih jam sekarang
+    offset = P.joinedAt.toMillis() - joinMid; joinMid = null; store.set("off:" + pin, offset);
+  }
+  renderLive();
+}
+async function checkLive(force) {
+  if (!pin || checking || (!force && document.hidden)) return;
+  if (!force && Date.now() - lastSnapAt < 6000) return;           // koneksi langsung masih hidup
+  if (!force && S?.status === "ended") return;
+  checking = true;
+  try {
+    const sd = (await withTimeout(getDocFromServer(doc(db, "sessions", pin)), 8000)).data();
+    if (!sd) return;
+    const behind = stageRank(sd) > stageRank(S);
+    const needP = sd.status !== "lobby" && sd.status !== "question" && (P?.lastQ ?? -1) !== sd.current;
+    lastSnapAt = Date.now();
+    if (behind) applySession(sd);
+    if (needP || behind) {
+      const pd = (await withTimeout(getDocFromServer(doc(db, "sessions", pin, "players", uid)), 8000)).data();
+      if (pd) applyPlayer(pd);
+    }
+    if (behind) { console.warn("AlvQuis: koneksi langsung tertinggal, menyambung ulang"); resubscribe(); }
+  } catch (e) { console.warn("checkLive", e); }
+  finally { checking = false; }
+}
+// Pasang ulang pendengar tanpa mengubah tampilan (S & P tetap; data basi diabaikan oleh applySession/applyPlayer).
+function resubscribe() {
+  if (!pin) return;
+  startLive(); renderLive();
+}
+const withTimeout = (pr, ms) => Promise.race([pr, new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error("timeout"), { code: "timeout" })), ms))]);
+// HP baru dibuka lagi / sinyal kembali: langsung periksa keadaan terbaru.
+document.addEventListener("visibilitychange", () => { if (!document.hidden && watchdog) checkLive(true); });
+window.addEventListener("online", () => { if (watchdog) checkLive(true); });
+window.addEventListener("pageshow", (e) => { if (e.persisted && watchdog) checkLive(true); });
 
 function renderLive() {
   if (!S || !P) return;
@@ -287,7 +340,7 @@ function renderIntro(name, nim) {
     try {
       await setDoc(doc(db, "sessions", pin, "submissions", uid), { name, nim, answers: {}, status: "progress", startedAt: serverTimestamp(), updatedAt: serverTimestamp(), ...(S.ownerUid ? { ownerUid: S.ownerUid } : {}) });
       startMandiri();
-    } catch (err) { e.target.disabled = false; toast("Tidak bisa memulai. Ujian mungkin sudah ditutup."); console.error(err); }
+    } catch (err) { e.target.disabled = false; toast(`Tidak bisa memulai (${err.code || err.message}). Ujian mungkin sudah ditutup.`, 6000); console.error(err); }
   };
 }
 
