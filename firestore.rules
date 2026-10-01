@@ -17,9 +17,16 @@ service cloud.firestore {
         && request.auth.token.firebase.sign_in_provider == 'google.com'
         && request.auth.token.get('email_verified', false) == true;
     }
-    // Dosen = akun Google yang sudah mengisi profil di /dosen/{uid}.
+    // SUPER ADMIN: GANTI/TAMBAH email di sini (sama dengan ADMIN_EMAILS di assets/firebase-config.js).
+    function isAdmin() {
+      return isGoogle() && request.auth.token.email.lower() in [
+        'alvinnurch@gmail.com'
+      ];
+    }
+    // Dosen = akun Google yang sudah mengisi profil di /dosen/{uid} dan tidak diblokir super admin.
     function isDosen() {
-      return isGoogle() && exists(/databases/$(database)/documents/dosen/$(request.auth.uid));
+      return isGoogle() && exists(/databases/$(database)/documents/dosen/$(request.auth.uid))
+        && get(/databases/$(database)/documents/dosen/$(request.auth.uid)).data.get('blocked', false) != true;
     }
     function sess(pin) {
       return get(/databases/$(database)/documents/sessions/$(pin)).data;
@@ -31,7 +38,11 @@ service cloud.firestore {
 
     // ---------- Profil dosen (pendaftaran) ----------
     match /dosen/{uid} {
-      allow read, delete: if isGoogle() && request.auth.uid == uid;
+      allow read: if (isGoogle() && request.auth.uid == uid) || isAdmin();
+      allow list, delete: if isAdmin();
+      // Super admin boleh memblokir/membuka blokir (field "blocked").
+      allow update: if isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['blocked', 'blockedAt']);
+      // Dosen mengisi/memperbarui profilnya sendiri (tidak bisa menyentuh status blokir).
       allow create, update: if isGoogle() && request.auth.uid == uid
         && request.resource.data.keys().hasOnly(['name', 'institution', 'email', 'createdAt'])
         && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100
@@ -41,7 +52,7 @@ service cloud.firestore {
 
     // ---------- Bank soal (berisi kunci jawaban): hanya pemiliknya ----------
     match /quizzes/{quizId} {
-      allow read, delete: if isDosen() && resource.data.ownerUid == request.auth.uid;
+      allow read, delete: if (isDosen() && resource.data.ownerUid == request.auth.uid) || isAdmin();
       allow update: if isDosen() && resource.data.ownerUid == request.auth.uid
         && request.resource.data.ownerUid == request.auth.uid;
       allow create: if isDosen() && request.resource.data.ownerUid == request.auth.uid;
@@ -51,20 +62,21 @@ service cloud.firestore {
       // Mahasiswa hanya bisa membuka sesi bila tahu PIN-nya (get), tidak bisa melihat daftar sesi.
       allow get: if signedIn();
       // Dosen hanya bisa mendaftar sesi miliknya sendiri (query harus memakai where ownerUid == uid).
-      allow list: if isDosen() && resource.data.ownerUid == request.auth.uid;
+      allow list: if (isDosen() && resource.data.ownerUid == request.auth.uid) || isAdmin();
       allow create: if isDosen() && request.resource.data.ownerUid == request.auth.uid;
       allow update: if isGoogle() && resource.data.ownerUid == request.auth.uid
         && request.resource.data.ownerUid == request.auth.uid;
-      allow delete: if isGoogle() && resource.data.ownerUid == request.auth.uid;
+      allow delete: if (isGoogle() && resource.data.ownerUid == request.auth.uid) || isAdmin();
 
       // Salinan soal lengkap + kunci + garam acak sesi: hanya pemilik sesi.
       match /private/{docId} {
         allow read, write: if ownsSession(pin);
+        allow delete: if isAdmin();
       }
 
       // ---------- MODE LIVE ----------
       match /players/{uid} {
-        allow read: if ownsSession(pin) || (signedIn() && request.auth.uid == uid);
+        allow read: if ownsSession(pin) || (signedIn() && request.auth.uid == uid) || isAdmin();
         allow create: if signedIn() && request.auth.uid == uid
           && request.resource.data.keys().hasOnly(['name', 'nim', 'avatar', 'score', 'joinedAt', 'ownerUid'])
           && (!('ownerUid' in request.resource.data) || request.resource.data.ownerUid == sess(pin).ownerUid)
@@ -79,13 +91,15 @@ service cloud.firestore {
         // Skor hanya dihitung dan ditulis oleh dosen pemilik sesi.
         // (ownerUid disalin ke dokumen peserta agar pembaruan skor massal tidak perlu membaca dokumen sesi berulang kali.)
         allow update, delete: if (isGoogle() && resource.data.get('ownerUid', '') == request.auth.uid) || ownsSession(pin);
+        allow delete: if isAdmin();
       }
 
       match /answers/{answerId} {
-        allow read: if ownsSession(pin) || (signedIn() && resource.data.uid == request.auth.uid);
+        allow read: if ownsSession(pin) || (signedIn() && resource.data.uid == request.auth.uid) || isAdmin();
         // Satu jawaban per soal, hanya selama soal itu sedang tayang, waktu dicap oleh server.
         allow create: if signedIn()
-          && request.resource.data.keys().hasOnly(['uid', 'q', 'choice', 'at'])
+          && request.resource.data.keys().hasOnly(['uid', 'q', 'choice', 'at', 'ownerUid'])
+          && (!('ownerUid' in request.resource.data) || request.resource.data.ownerUid == sess(pin).ownerUid)
           && request.resource.data.uid == request.auth.uid
           && request.resource.data.q is int
           && answerId == request.auth.uid + '_' + string(request.resource.data.q)
@@ -98,12 +112,12 @@ service cloud.firestore {
           && sess(pin).current == request.resource.data.q
           && exists(/databases/$(database)/documents/sessions/$(pin)/players/$(request.auth.uid));
         allow update: if false;
-        allow delete: if ownsSession(pin);
+        allow delete: if (isGoogle() && resource.data.get('ownerUid', '') == request.auth.uid) || ownsSession(pin) || isAdmin();
       }
 
       // ---------- MODE MANDIRI ----------
       match /submissions/{uid} {
-        allow read: if ownsSession(pin) || (signedIn() && request.auth.uid == uid);
+        allow read: if ownsSession(pin) || (signedIn() && request.auth.uid == uid) || isAdmin();
 
         allow create: if signedIn() && request.auth.uid == uid
           && request.resource.data.keys().hasOnly(['name', 'nim', 'answers', 'status', 'startedAt', 'updatedAt', 'ownerUid'])
@@ -133,7 +147,7 @@ service cloud.firestore {
           && request.time < resource.data.startedAt + duration.value(sess(pin).durationMin + 1, 'm')
           && (sess(pin).deadline == null || request.time < sess(pin).deadline + duration.value(1, 'm'))
         );
-        allow delete: if ownsSession(pin);
+        allow delete: if (isGoogle() && resource.data.get('ownerUid', '') == request.auth.uid) || ownsSession(pin) || isAdmin();
       }
     }
   }

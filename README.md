@@ -97,8 +97,9 @@ Aturan inilah yang menjaga kunci jawaban tidak bocor dan mahasiswa tidak bisa me
 
 1. Masih di halaman Firestore, buka tab **Rules**.
 2. Hapus seluruh isi editor (`Cmd+A` lalu `Delete`).
-3. Buka file `firestore.rules` dari folder ini (klik kanan → *Open With* → TextEdit atau editor lain), salin **seluruh** isinya, lalu tempel ke editor Rules. **Tidak ada yang perlu diubah.**
-4. Klik **Publish**. Jika muncul tulisan merah, kemungkinan ada bagian yang tidak ikut tersalin. Ulangi langkah 2–3.
+3. Buka file `firestore.rules` dari folder ini (klik kanan → *Open With* → TextEdit atau editor lain), salin **seluruh** isinya, lalu tempel ke editor Rules.
+4. Cari fungsi `isAdmin()` dan pastikan email di dalamnya adalah **email Google Anda sebagai super admin** (bawaan: `alvinnurch@gmail.com`). Bila ingin lebih dari satu super admin, pisahkan dengan koma: `'a@gmail.com', 'b@gmail.com'`.
+5. Klik **Publish**. Jika muncul tulisan merah, kemungkinan ada bagian yang tidak ikut tersalin. Ulangi langkah 2–3.
 
 Aturan ini memastikan:
 
@@ -162,8 +163,9 @@ Edit langsung di GitHub agar tanda kutip tidak berubah menjadi kutip miring (Tex
    };
    ```
 
-4. Klik **Commit changes…** → **Commit changes**.
-5. Tunggu ±1 menit. GitHub Pages memperbarui situs secara otomatis setiap ada perubahan.
+4. Di file yang sama, pastikan `ADMIN_EMAILS` berisi email super admin yang **sama** dengan langkah A5.
+5. Klik **Commit changes…** → **Commit changes**.
+6. Tunggu ±1 menit. GitHub Pages memperbarui situs secara otomatis setiap ada perubahan.
 
 > `apiKey` Firebase memang boleh terlihat publik. Ia hanya penanda proyek, bukan kata sandi. Yang menjaga data adalah Rules di langkah A5.
 
@@ -244,7 +246,16 @@ Tandai jawaban benar dengan `*` di depan opsi, atau baris `Kunci: B`. Opsi *Bena
 
 **Mengajak dosen/guru lain.** Bagikan alamat `…/alvquis/dosen.html`. Mereka cukup masuk dengan akun Google masing-masing dan mengisi profil. Tidak ada yang perlu Anda ubah. Setiap dosen punya bank soal dan rekap nilainya sendiri dan tidak bisa melihat milik dosen lain.
 
-**Melihat siapa saja yang sudah mendaftar.** Firebase console → **Firestore → Data** → koleksi `dosen` (nama, lembaga, email, waktu daftar). Untuk mencabut akses seseorang, hapus dokumennya di koleksi `dosen` lalu nonaktifkan akunnya di **Authentication → Users**.
+**Super admin.** Akun yang emailnya tercantum di `isAdmin()` (Rules) dan `ADMIN_EMAILS` (config) mendapat tab **Super admin** di halaman dosen. Isinya:
+
+- **Ringkasan:** jumlah dosen terdaftar, kuis, sesi, dan peserta.
+- **Dosen:** nama, lembaga, email, tanggal daftar, jumlah kuis dan sesi, serta aktivitas terakhir.
+  - **Lihat** menampilkan sesi milik dosen tersebut.
+  - **Blokir** menghentikan dosen itu membuat kuis atau sesi baru; datanya tetap tersimpan. Tombol **Aktifkan** membatalkannya.
+- **Sesi:** semua sesi dari semua dosen, beserta jumlah pesertanya. **Hapus** menghapus sesi bersama seluruh jawaban dan nilainya secara permanen.
+- **Kuis:** semua bank soal dari semua dosen. **Hapus** menghapusnya secara permanen.
+
+Super admin tidak bisa memblokir dirinya sendiri. Dosen lain tidak melihat tab ini, dan Rules juga menolak mereka membaca data milik orang lain.
 
 ---
 

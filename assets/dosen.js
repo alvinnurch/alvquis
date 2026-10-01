@@ -1,14 +1,16 @@
 import {
   configured, auth, db, authReady, GoogleAuthProvider, signInWithPopup, signOut,
   doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
-  serverTimestamp, writeBatch, query, where, increment, Timestamp,
-} from "./fb.js";
-import { esc, shape, toast, LETTERS, OPT_CLASS, pointsFor, fmtDate, setupNotice } from "./ui.js";
-import { SAMPLE_QUIZ, SAMPLE_KIDS } from "./sample-quiz.js";
-import { THEMES, THEME_KEYS, themeOf, arena, avatar, gameState } from "./themes.js";
-import { Sound } from "./sound.js";
-import { isChoice, isCorrect, publicQ, solutionList, newSalt } from "./qtypes.js";
-import { stageSeq, stageSolution } from "./qwidgets.js";
+  serverTimestamp, writeBatch, query, where, increment, Timestamp, getCountFromServer,
+} from "./fb.js?v=2026.10.01-r3";
+import { ADMIN_EMAILS } from "./firebase-config.js?v=2026.10.01-r3";
+import { esc, shape, toast, LETTERS, OPT_CLASS, pointsFor, fmtDate, setupNotice } from "./ui.js?v=2026.10.01-r3";
+import { SAMPLE_QUIZ, SAMPLE_KIDS } from "./sample-quiz.js?v=2026.10.01-r3";
+import { THEMES, THEME_KEYS, themeOf, arena, avatar, gameState } from "./themes.js?v=2026.10.01-r3";
+import { Sound } from "./sound.js?v=2026.10.01-r3";
+import { VERSION } from "./version.js?v=2026.10.01-r3";
+import { isChoice, isCorrect, publicQ, solutionList, newSalt } from "./qtypes.js?v=2026.10.01-r3";
+import { stageSeq, stageSolution } from "./qwidgets.js?v=2026.10.01-r3";
 // Firestore tidak menerima array di dalam array: pasangan disimpan sebagai {l, r}.
 const normQ = (q) => (q.kind === "cocok" && q.pairs?.length && !Array.isArray(q.pairs[0]) ? { ...q, pairs: q.pairs.map((p) => [p.l, p.r]) } : q);
 
@@ -86,6 +88,15 @@ function enter(u, prof) {
   me = u;
   $tabs.hidden = false;
   const nm = document.getElementById("who-dosen"); if (nm) nm.textContent = prof?.name || u.email || "";
+  if (prof?.blocked) {
+    $tabs.hidden = true;
+    $view.innerHTML = `<div class="notice" style="max-width:520px;margin:48px auto">Akun <b>${esc(u.email || "")}</b> sedang dinonaktifkan oleh super admin. Hubungi pengelola AlvQuis bila ini keliru.</div>`;
+    return;
+  }
+  if (isAdminUser() && !$tabs.querySelector('[data-tab="admin"]')) {
+    const b = document.createElement("button"); b.className = "tab"; b.dataset.tab = "admin"; b.setAttribute("aria-selected", "false"); b.textContent = "Super admin";
+    $tabs.insertBefore(b, document.getElementById("logout"));
+  }
   unsubs.push(onSnapshot(query(collection(db, "quizzes"), where("ownerUid", "==", me.uid)), (s) => {
     quizzes = s.docs.map((d) => { const x = d.data(); return { id: d.id, ...x, questions: (x.questions || []).map(normQ) }; }).sort((a, b) => (b.updatedAt?.toMillis?.() || 0) - (a.updatedAt?.toMillis?.() || 0));
     if (tab === "soal" && !draft) render();
@@ -109,7 +120,9 @@ function render() {
   [...$tabs.querySelectorAll("[data-tab]")].forEach((t) => t.setAttribute("aria-selected", String(t.dataset.tab === tab)));
   if (tab === "soal") return draft ? renderEditor() : renderQuizList();
   if (tab === "sesi") return rekapPin ? renderRekap(rekapPin) : renderSessions();
+  if (tab === "admin") return renderAdmin();
 }
+const isAdminUser = () => !!me?.email && ADMIN_EMAILS.map((e) => e.toLowerCase()).includes(me.email.toLowerCase());
 
 /* ---------------------------------------------------------------- in-page dialogs */
 function ask(message, okLabel = "Ya", danger = false) {
@@ -428,7 +441,7 @@ async function createSession(quiz, mode, opts) {
     if (!(await getDoc(doc(db, "sessions", pin))).exists()) break;
   }
   const full = quiz.questions.map(cleanQ), salt = newSalt();
-  const base = { pin, quizId: quiz.id, title: quiz.title, course: quiz.course || "", owner: me.email || "", ownerUid: me.uid, mode, total: full.length, createdAt: serverTimestamp() };
+  const base = { pin, quizId: quiz.id, title: quiz.title, course: quiz.course || "", owner: me.email || "", ownerUid: me.uid, appVersion: VERSION, mode, total: full.length, createdAt: serverTimestamp() };
   const sess = mode === "live"
     ? { ...base, status: "lobby", current: -1, question: null, correct: null, counts: null, leaderboard: [], theme: THEMES[opts.theme] ? opts.theme : "klasik", lives: Math.min(Math.max(+opts.lives || 3, 1), 5) }
     : { ...base, status: "open", questions: quiz.questions.map((q, qi) => publicQ(q, qi, salt)),
@@ -576,8 +589,8 @@ async function deleteSession(pin, mode) {
   const subs = mode === "live" ? ["players", "answers", "private"] : ["submissions", "private"];
   for (const c of subs) {
     const snap = await getDocs(collection(db, "sessions", pin, c));
-    for (let i = 0; i < snap.docs.length; i += 400) {
-      const b = writeBatch(db); snap.docs.slice(i, i + 400).forEach((d) => b.delete(d.ref)); await b.commit();
+    for (let i = 0; i < snap.docs.length; i += 100) {
+      const b = writeBatch(db); snap.docs.slice(i, i + 100).forEach((d) => b.delete(d.ref)); await b.commit();
     }
   }
   await deleteDoc(doc(db, "sessions", pin));
@@ -620,6 +633,12 @@ async function openStage(pin) {
       const started = H.s.questionStartedAt?.toMillis?.();
       H.qStartLocal = H.localStart?.i === H.s.current ? H.localStart.t
         : started && Math.abs(Date.now() - started) < 60e3 ? started : Date.now();
+    }
+    // Pemulihan: soal sudah ditutup tetapi skor belum tertulis (mis. laptop sempat offline) → hitung ulang.
+    if (H.s.status === "reveal" && H.s.counts == null && !H.revealing) {
+      const cur = H.s.current;
+      clearTimeout(H.recover);
+      H.recover = setTimeout(() => { if (H.s?.status === "reveal" && H.s.counts == null && H.s.current === cur) reveal(); }, 4000);
     }
     renderStage();
   }, lost));
@@ -714,7 +733,7 @@ function renderStage() {
     : `<div class="qtext" style="font-size:clamp(20px,3vw,36px)">${esc(q.text)}</div>
       ${s.counts ? `<div class="dist">${q.options.map((_, i) => `<div class="col"><div class="c">${counts[i]}</div><div class="b ${OPT_CLASS[i]}" style="height:${(counts[i] / maxC) * 100}%"></div><div class="s ${OPT_CLASS[i]}">${shape(i)}</div></div>`).join("")}</div>` : `<p style="text-align:center">Menghitung jawaban…</p>`}
       <div class="tiles">${q.options.map((o, i) => `<div class="tile ${OPT_CLASS[i]} ${s.correct === i ? "win" : s.correct == null ? "" : "dim"}">${shape(i)}<span class="t">${esc(o)}</span>${s.correct === i ? `<span class="mark" aria-label="jawaban benar">✓</span>` : ""}</div>`).join("")}</div>`;
-    foot = `<span class="small" style="opacity:.8">Soal ${s.current + 1} dari ${H.Q.length}</span><div class="row"><button class="btn" id="board" ${s.counts ? "" : "disabled"}>Papan skor</button><button class="btn gold lg" id="next" ${s.counts ? "" : "disabled"}>${s.current + 1 >= H.Q.length ? "Lihat juara" : "Soal berikutnya"}</button></div>`;
+    foot = `<span class="small" style="opacity:.8">Soal ${s.current + 1} dari ${H.Q.length}</span><div class="row">${s.counts ? "" : `<button class="btn light" id="rescore">Hitung ulang skor</button>`}<button class="btn" id="board" ${s.counts ? "" : "disabled"}>Papan skor</button><button class="btn gold lg" id="next" ${s.counts ? "" : "disabled"}>${s.current + 1 >= H.Q.length ? "Lihat juara" : "Soal berikutnya"}</button></div>`;
   } else if (s.status === "leaderboard") {
     body = `<h2 style="text-align:center;font-size:clamp(28px,4vw,48px)">Papan skor</h2>
       <div class="board">${(s.leaderboard || []).map((p, i) => `<div class="board-row with-av" style="animation-delay:${i * 80}ms"><span class="r">${i + 1}</span>${avatar(p.avatar)}<span class="nm">${esc(p.name)}</span><span class="sc">${p.score.toLocaleString("id-ID")}</span></div>`).join("") || `<p style="text-align:center">Belum ada skor.</p>`}</div>`;
@@ -740,6 +759,7 @@ function renderStage() {
   $stage.querySelector("#fs").onclick = () => (document.fullscreenElement ? document.exitFullscreen() : $stage.requestFullscreen?.())?.catch?.(() => toast("Layar penuh tidak tersedia di peramban ini"));
   $stage.querySelector("#next")?.addEventListener("click", nextQuestion);
   $stage.querySelector("#reveal")?.addEventListener("click", reveal);
+  $stage.querySelector("#rescore")?.addEventListener("click", (e) => { e.target.disabled = true; e.target.textContent = "Menghitung…"; reveal(); });
   $stage.querySelector("#board")?.addEventListener("click", showBoard);
   $stage.querySelector("#rekap")?.addEventListener("click", () => { const p = H.pin; closeStage(); tab = "sesi"; rekapPin = p; draft = null; render(); });
 }
@@ -765,45 +785,191 @@ async function nextQuestionInner() {
   await updateDoc(doc(db, "sessions", H.pin), {
     status: "question", current: i, correct: null, counts: null,
     question: { ...publicQ(q, i, H.salt), time: q.time, points: q.points }, solution: null,
-    questionStartedAt: serverTimestamp(),
+    questionStartedAt: serverTimestamp(), appVersion: VERSION,
   });
 }
 
+// Membuka jawaban & menghitung skor.
+// Dibuat aman untuk diulang: peserta yang sudah dinilai untuk soal ini (lastQ === soal) dilewati,
+// jadi bila sinyal laptop putus di tengah jalan, penghitungan bisa diulang tanpa skor ganda.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function reveal() {
-  if (H.revealing || H.s?.status !== "question") return;
+  const s = H.s;
+  if (H.revealing || !s || !(s.status === "question" || (s.status === "reveal" && s.counts == null))) return;
   H.revealing = true; clearInterval(H.tick);
-  const qi = H.s.current, q = H.Q[qi], ref = doc(db, "sessions", H.pin);
-  try {
-    await updateDoc(ref, { status: "reveal" });               // closes answering (rules check status)
-    const [sSnap, aSnap] = await Promise.all([getDoc(ref), getDocs(query(collection(db, "sessions", H.pin, "answers"), where("q", "==", qi)))]);
-    const startMs = sSnap.data().questionStartedAt?.toMillis?.() ?? H.qStartLocal;
-    const counts = [0, 0, 0, 0], got = {};
-    aSnap.forEach((d) => {
-      const a = d.data(); if (got[a.uid]) return;
-      const ok = isCorrect(q, qi, H.salt, a.choice);
-      if (isChoice(q)) counts[a.choice]++; else counts[ok ? 0 : 1]++;
-      got[a.uid] = { ok, pts: pointsFor(ok, (a.at?.toMillis?.() ?? startMs) - startMs, q.time, q.points) };
-    });
-    const newScores = {};
-    H.players.forEach((p) => { newScores[p.uid] = (p.score || 0) + (got[p.uid]?.pts || 0); });
-    const ranked = Object.entries(newScores).sort((a, b) => b[1] - a[1]);
-    const rankOf = {}; ranked.forEach(([uid], i) => { rankOf[uid] = i + 1; });
-    for (let i = 0; i < H.players.length; i += 400) {
-      const b = writeBatch(db);
-      H.players.slice(i, i + 400).forEach((p) => {
-        const g = got[p.uid];
-        b.update(doc(db, "sessions", H.pin, "players", p.uid), {
-          score: increment(g?.pts || 0), correct: increment(g?.ok ? 1 : 0),
-          wrong: increment(g?.ok ? 0 : 1),
-          lastQ: qi, lastPoints: g?.pts || 0, lastCorrect: !!g?.ok, answered: !!g, rank: rankOf[p.uid],
-        });
+  const qi = s.current, q = H.Q[qi], ref = doc(db, "sessions", H.pin);
+  let err = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      if (H.s?.status === "question") await updateDoc(ref, { status: "reveal" });   // menutup jawaban
+      await scoreQuestion(qi, q, ref);
+      err = null; break;
+    } catch (e) { err = e; console.error("reveal", attempt, e); await sleep(1000 * (attempt + 1)); }
+  }
+  H.revealing = false; H.scoreError = err;
+  if (err) { toast("Skor belum terhitung: " + (err.code || err.message) + ". Tekan Hitung ulang skor."); renderStage(); }
+}
+async function scoreQuestion(qi, q, ref) {
+  const [sSnap, aSnap, pSnap] = await Promise.all([
+    getDoc(ref),
+    getDocs(query(collection(db, "sessions", H.pin, "answers"), where("q", "==", qi))),
+    getDocs(collection(db, "sessions", H.pin, "players")),
+  ]);
+  const startMs = sSnap.data()?.questionStartedAt?.toMillis?.() ?? H.qStartLocal;
+  const players = pSnap.docs.map((d) => ({ uid: d.id, ...d.data() }));
+  const counts = [0, 0, 0, 0], got = {};
+  aSnap.forEach((d) => {
+    const a = d.data(); if (!a || got[a.uid]) return;
+    const ok = isCorrect(q, qi, H.salt, a.choice);
+    if (isChoice(q)) { if (Number.isInteger(a.choice) && a.choice >= 0 && a.choice < 4) counts[a.choice]++; } else counts[ok ? 0 : 1]++;
+    const pts = pointsFor(ok, (a.at?.toMillis?.() ?? startMs) - startMs, q.time || 20, q.points ?? 1000);
+    got[a.uid] = { ok, pts: Number.isFinite(pts) ? pts : 0 };
+  });
+  const finalScore = {};
+  players.forEach((p) => { finalScore[p.uid] = p.lastQ === qi ? (p.score || 0) : (p.score || 0) + (got[p.uid]?.pts || 0); });
+  const rankOf = {}; Object.entries(finalScore).sort((a, b) => b[1] - a[1]).forEach(([uid], i) => { rankOf[uid] = i + 1; });
+  for (let i = 0; i < players.length; i += 100) {
+    const b = writeBatch(db);
+    players.slice(i, i + 100).forEach((p) => {
+      const pref = doc(db, "sessions", H.pin, "players", p.uid);
+      if (p.lastQ === qi) { b.update(pref, { rank: rankOf[p.uid] }); return; }   // sudah dinilai sebelumnya
+      const g = got[p.uid];
+      b.update(pref, {
+        score: finalScore[p.uid], correct: (p.correct || 0) + (g?.ok ? 1 : 0), wrong: (p.wrong || 0) + (g?.ok ? 0 : 1),
+        lastQ: qi, lastPoints: g?.pts || 0, lastCorrect: !!g?.ok, answered: !!g, rank: rankOf[p.uid],
       });
-      await b.commit();
-    }
-    await updateDoc(ref, { correct: isChoice(q) ? q.correct : null, solution: isChoice(q) ? null : solutionList(q), counts, leaderboard: topN(newScores, 5) });
-  } catch (e) { console.error(e); toast("Gagal menghitung skor: " + (e.code || e.message)); H.revealing = false; }
+    });
+    await b.commit();
+  }
+  const leaderboard = players.map((p) => ({ name: p.name || "", score: finalScore[p.uid] || 0, avatar: p.avatar || 0 }))
+    .sort((a, b) => b.score - a.score).slice(0, 5);
+  await updateDoc(ref, {
+    correct: isChoice(q) && Number.isInteger(q.correct) ? q.correct : null,
+    solution: isChoice(q) ? null : solutionList(q), counts, leaderboard,
+  });
 }
 
 async function showBoard() {
   await updateDoc(doc(db, "sessions", H.pin), { status: "leaderboard", leaderboard: topN(null, 5) });
+}
+
+
+/* ================================================================ SUPER ADMIN */
+// Hanya muncul untuk email di ADMIN_EMAILS (dan dijaga oleh isAdmin() di firestore.rules).
+const A = { view: "dosen", filter: null, data: null, counts: {} };
+
+async function loadAdmin() {
+  const [dS, qS, sS] = await Promise.all([getDocs(collection(db, "dosen")), getDocs(collection(db, "quizzes")), getDocs(collection(db, "sessions"))]);
+  const dosen = dS.docs.map((d) => ({ uid: d.id, ...d.data() }));
+  const qz = qS.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const ss = sS.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+  const byUid = Object.fromEntries(dosen.map((d) => [d.uid, d]));
+  // Pemilik yang belum punya profil (data lama) tetap ditampilkan.
+  [...qz, ...ss].forEach((x) => { if (x.ownerUid && !byUid[x.ownerUid]) byUid[x.ownerUid] = { uid: x.ownerUid, name: "", institution: "", email: x.owner || "", noProfile: true }; });
+  A.data = { dosen: Object.values(byUid), quizzes: qz, sessions: ss, byUid };
+}
+async function sessionCount(s) {
+  if (A.counts[s.id] != null) return A.counts[s.id];
+  try { const c = await getCountFromServer(collection(db, "sessions", s.id, s.mode === "live" ? "players" : "submissions")); A.counts[s.id] = c.data().count; }
+  catch { A.counts[s.id] = "?"; }
+  return A.counts[s.id];
+}
+const ownerName = (uid, fallback) => { const d = A.data.byUid[uid]; return d ? (d.name || d.email || "—") : fallback || "—"; };
+
+async function renderAdmin(reload) {
+  if (!isAdminUser()) { tab = "soal"; return render(); }
+  if (!A.data || reload) {
+    $view.innerHTML = `<p class="muted">Memuat data seluruh pengguna…</p>`;
+    try { await loadAdmin(); } catch (e) {
+      $view.innerHTML = `<div class="notice">Gagal memuat data admin (${esc(e.code || e.message)}). Pastikan email Anda tercantum di <code>isAdmin()</code> pada firestore.rules dan Rules sudah di-<b>Publish</b>.</div>`; return;
+    }
+  }
+  if (tab !== "admin") return;
+  const D = A.data, f = A.filter;
+  const qz = f ? D.quizzes.filter((q) => q.ownerUid === f) : D.quizzes;
+  const ss = f ? D.sessions.filter((x) => x.ownerUid === f) : D.sessions;
+  const nQ = (uid) => D.quizzes.filter((q) => q.ownerUid === uid).length, nS = (uid) => D.sessions.filter((x) => x.ownerUid === uid).length;
+  const lastAct = (uid) => Math.max(0, ...D.sessions.filter((x) => x.ownerUid === uid).map((x) => x.createdAt?.toMillis?.() || 0), ...D.quizzes.filter((q) => q.ownerUid === uid).map((q) => q.updatedAt?.toMillis?.() || 0));
+  const seg = (k, label, n) => `<button class="tab" data-av="${k}" aria-selected="${A.view === k}">${label} <span class="muted">(${n})</span></button>`;
+  let table = "";
+  if (A.view === "dosen") {
+    const list = D.dosen.slice().sort((a, b) => lastAct(b.uid) - lastAct(a.uid));
+    table = `<div class="tablewrap"><table class="admin-table"><thead><tr><th>Dosen</th><th>Lembaga</th><th>Email</th><th>Terdaftar</th><th class="num">Kuis</th><th class="num">Sesi</th><th>Aktivitas terakhir</th><th>Status</th><th></th></tr></thead><tbody>
+      ${list.map((d) => `<tr>
+        <td><b>${esc(d.name || "(tanpa profil)")}</b></td><td>${esc(d.institution || "—")}</td><td class="mono small">${esc(d.email || "—")}</td>
+        <td>${fmtDate(d.createdAt)}</td><td class="num mono">${nQ(d.uid)}</td><td class="num mono">${nS(d.uid)}</td><td>${lastAct(d.uid) ? fmtDate(new Date(lastAct(d.uid))) : "—"}</td>
+        <td>${d.blocked ? `<span class="pill live">Diblokir</span>` : d.noProfile ? `<span class="pill">Tanpa profil</span>` : `<span class="pill open">Aktif</span>`}</td>
+        <td class="row" style="flex-wrap:nowrap">
+          <button class="btn sm" data-see="${esc(d.uid)}">Lihat</button>
+          ${d.noProfile || d.uid === me.uid ? "" : `<button class="btn sm ${d.blocked ? "" : "danger"}" data-block="${esc(d.uid)}" data-on="${d.blocked ? 0 : 1}">${d.blocked ? "Aktifkan" : "Blokir"}</button>`}
+        </td></tr>`).join("") || `<tr><td colspan="9" class="muted">Belum ada dosen terdaftar.</td></tr>`}
+      </tbody></table></div>`;
+  } else if (A.view === "sesi") {
+    table = `<div class="tablewrap"><table class="admin-table"><thead><tr><th>Sesi</th><th>Dosen</th><th>PIN</th><th>Mode</th><th>Status</th><th class="num">Peserta</th><th>Dibuat</th><th></th></tr></thead><tbody>
+      ${ss.map((x) => `<tr>
+        <td><b>${esc(x.title || "—")}</b><div class="small muted">${esc(x.course || "")}</div></td><td>${esc(ownerName(x.ownerUid, x.owner))}</td>
+        <td class="mono">${esc(x.pin || x.id)}</td><td>${x.mode === "live" ? "Live" : "Mandiri"}</td><td>${esc(x.status || "—")}</td>
+        <td class="num mono" data-count="${esc(x.id)}">${A.counts[x.id] ?? "…"}</td><td>${fmtDate(x.createdAt)}</td>
+        <td><button class="btn sm danger" data-delsess="${esc(x.id)}">Hapus</button></td></tr>`).join("") || `<tr><td colspan="8" class="muted">Tidak ada sesi.</td></tr>`}
+      </tbody></table></div>`;
+  } else {
+    table = `<div class="tablewrap"><table class="admin-table"><thead><tr><th>Kuis</th><th>Dosen</th><th class="num">Soal</th><th>Diubah</th><th></th></tr></thead><tbody>
+      ${qz.map((q) => `<tr><td><b>${esc(q.title || "—")}</b><div class="small muted">${esc(q.course || "")}</div></td><td>${esc(ownerName(q.ownerUid, q.owner))}</td>
+        <td class="num mono">${(q.questions || []).length}</td><td>${fmtDate(q.updatedAt)}</td>
+        <td><button class="btn sm danger" data-delquiz="${esc(q.id)}">Hapus</button></td></tr>`).join("") || `<tr><td colspan="5" class="muted">Tidak ada kuis.</td></tr>`}
+      </tbody></table></div>`;
+  }
+  const totalPeserta = Object.values(A.counts).filter((v) => typeof v === "number").reduce((a, b) => a + b, 0);
+  $view.innerHTML = `
+    <div class="page-head">
+      <div class="stack tight"><span class="eyebrow">Super admin</span><h1>Pengguna &amp; konten</h1>
+        <p class="muted small">Hanya terlihat oleh akun super admin. Penghapusan bersifat permanen.</p></div>
+      <div class="row"><button class="btn" id="a-reload">Muat ulang</button></div>
+    </div>
+    <div class="stack">
+      <div class="stats">
+        <div class="card stat"><div class="v">${D.dosen.filter((d) => !d.noProfile).length}</div><div class="k">Dosen terdaftar</div></div>
+        <div class="card stat"><div class="v">${D.quizzes.length}</div><div class="k">Kuis di bank soal</div></div>
+        <div class="card stat"><div class="v">${D.sessions.length}</div><div class="k">Sesi dibuat</div></div>
+        <div class="card stat"><div class="v" id="a-peserta">${totalPeserta || "…"}</div><div class="k">Peserta tercatat</div></div>
+      </div>
+      <div class="row between">
+        <nav class="tabs" style="margin-left:0">${seg("dosen", "Dosen", D.dosen.length)}${seg("sesi", "Sesi", ss.length)}${seg("kuis", "Kuis", qz.length)}</nav>
+        ${f ? `<span class="pill gold">Dosen: ${esc(ownerName(f))} <button class="btn ghost sm" id="a-clear" style="min-height:0;padding:0 4px">✕</button></span>` : ""}
+      </div>
+      ${table}
+    </div>`;
+  $view.querySelector("#a-reload").onclick = () => { A.counts = {}; renderAdmin(true); };
+  $view.querySelector("#a-clear")?.addEventListener("click", () => { A.filter = null; renderAdmin(); });
+  $view.querySelectorAll("[data-av]").forEach((b) => b.onclick = () => { A.view = b.dataset.av; renderAdmin(); });
+  $view.querySelectorAll("[data-see]").forEach((b) => b.onclick = () => { A.filter = b.dataset.see; A.view = "sesi"; renderAdmin(); });
+  $view.querySelectorAll("[data-block]").forEach((b) => b.onclick = async () => {
+    const on = b.dataset.on === "1", d = D.byUid[b.dataset.block];
+    if (!(await ask(on ? `Blokir ${d.name || d.email}? Ia tidak bisa lagi membuat kuis atau sesi baru. Data lamanya tetap tersimpan.` : `Aktifkan kembali ${d.name || d.email}?`, on ? "Blokir" : "Aktifkan", on))) return;
+    try { await updateDoc(doc(db, "dosen", d.uid), { blocked: on, blockedAt: serverTimestamp() }); d.blocked = on; toast(on ? "Dosen diblokir" : "Dosen diaktifkan"); renderAdmin(); }
+    catch (e) { toast("Gagal: " + (e.code || e.message)); }
+  });
+  $view.querySelectorAll("[data-delquiz]").forEach((b) => b.onclick = async () => {
+    const q = D.quizzes.find((x) => x.id === b.dataset.delquiz);
+    if (!(await ask(`Hapus kuis "${q.title}" milik ${ownerName(q.ownerUid, q.owner)}? Sesi yang sudah berjalan tidak ikut terhapus.`, "Hapus permanen", true))) return;
+    try { await deleteDoc(doc(db, "quizzes", q.id)); D.quizzes = D.quizzes.filter((x) => x !== q); toast("Kuis dihapus"); renderAdmin(); }
+    catch (e) { toast("Gagal: " + (e.code || e.message)); }
+  });
+  $view.querySelectorAll("[data-delsess]").forEach((b) => b.onclick = async () => {
+    const x = D.sessions.find((y) => y.id === b.dataset.delsess);
+    if (!(await ask(`Hapus sesi "${x.title}" (PIN ${x.pin || x.id}) milik ${ownerName(x.ownerUid, x.owner)} beserta seluruh jawaban dan nilainya?`, "Hapus permanen", true))) return;
+    b.disabled = true; b.textContent = "Menghapus…";
+    try { await deleteSession(x.id, x.mode); D.sessions = D.sessions.filter((y) => y !== x); toast("Sesi dihapus"); renderAdmin(); }
+    catch (e) { toast("Gagal: " + (e.code || e.message)); b.disabled = false; b.textContent = "Hapus"; }
+  });
+  // Hitung peserta per sesi (bertahap, maks. 60 sesi terbaru yang tampil).
+  if (A.view === "sesi" || !Object.keys(A.counts).length) {
+    for (const x of (A.view === "sesi" ? ss : D.sessions).slice(0, 60)) {
+      if (A.counts[x.id] != null) continue;
+      const n = await sessionCount(x);
+      const cell = $view.querySelector(`[data-count="${CSS.escape(x.id)}"]`); if (cell) cell.textContent = n;
+      const tot = $view.querySelector("#a-peserta"); if (tot) tot.textContent = Object.values(A.counts).filter((v) => typeof v === "number").reduce((a, b) => a + b, 0);
+      if (tab !== "admin") break;
+    }
+  }
 }

@@ -1,11 +1,12 @@
 import {
   configured, auth, db, authReady, signInAnonymously,
   doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, deleteField,
-} from "./fb.js";
-import { esc, shape, toast, LETTERS, OPT_CLASS, shuffledIdx, fmtDate, mmss, setupNotice } from "./ui.js";
-import { THEMES, themeOf, avatar, avatarPicker, meWidget, themedFeedback } from "./themes.js";
-import { isChoice } from "./qtypes.js";
-import { mountSeq, solutionInline } from "./qwidgets.js";
+} from "./fb.js?v=2026.10.01-r3";
+import { esc, shape, toast, LETTERS, OPT_CLASS, shuffledIdx, fmtDate, mmss, setupNotice } from "./ui.js?v=2026.10.01-r3";
+import { THEMES, themeOf, avatar, avatarPicker, meWidget, themedFeedback } from "./themes.js?v=2026.10.01-r3";
+import { isChoice } from "./qtypes.js?v=2026.10.01-r3";
+import { VERSION } from "./version.js?v=2026.10.01-r3";
+import { mountSeq, solutionInline } from "./qwidgets.js?v=2026.10.01-r3";
 
 const $view = document.getElementById("view");
 const $who = document.getElementById("who");
@@ -102,7 +103,7 @@ function renderIdentity() {
 }
 
 /* ================================================================ LIVE */
-let P = null, myAns = {}, qSeenAt = 0, lastQ = -1, sig = "", joinMid = null, offset = null, retry = null;
+let P = null, myAns = {}, qSeenAt = 0, lastQ = -1, sig = "", joinMid = null, offset = null, retry = null, revealWait = null, revealTimer = null;
 
 // Selisih jam HP dengan jam server Firebase, diukur dari cap waktu saat bergabung.
 // Dipakai agar hitung mundur di HP sama dengan di layar proyektor.
@@ -126,6 +127,7 @@ function startLive() {
   };
   unsubs.push(onSnapshot(doc(db, "sessions", pin), (s) => {
     S = s.data(); if (!S) return renderJoin("", "Sesi telah dihapus oleh dosen.");
+    if (needsUpdate(S)) return;
     if (S.status === "question" && S.current !== lastQ) { lastQ = S.current; qSeenAt = Date.now(); }
     renderLive();
   }, lost));
@@ -168,7 +170,7 @@ function renderLive() {
       send.onclick = async () => {
         send.disabled = true; send.textContent = "Mengirim…";
         try {
-          await setDoc(doc(db, "sessions", pin, "answers", `${uid}_${i}`), { uid, q: i, choice: val, at: serverTimestamp() });
+          await setDoc(doc(db, "sessions", pin, "answers", `${uid}_${i}`), { uid, q: i, choice: val, at: serverTimestamp(), ...(S.ownerUid ? { ownerUid: S.ownerUid } : {}) });
           myAns[i] = val; store.set("ans:" + pin, myAns); sig = ""; renderLive();
         } catch (e) { answerFailed(e); }
       };
@@ -187,14 +189,27 @@ function renderLive() {
       const k = +b.dataset.k;
       $view.querySelectorAll(".m-tile").forEach((x) => { x.disabled = true; if (x !== b) x.style.opacity = ".3"; });
       try {
-        await setDoc(doc(db, "sessions", pin, "answers", `${uid}_${i}`), { uid, q: i, choice: k, at: serverTimestamp() });
+        await setDoc(doc(db, "sessions", pin, "answers", `${uid}_${i}`), { uid, q: i, choice: k, at: serverTimestamp(), ...(S.ownerUid ? { ownerUid: S.ownerUid } : {}) });
         myAns[i] = k; store.set("ans:" + pin, myAns); sig = ""; renderLive();
       } catch (e) { answerFailed(e); }
     });
     return;
   }
   if (S.status === "reveal") {
-    if (S.counts == null || P.lastQ !== i) return setView(`<div class="big-icon wait">…</div><h2>Menghitung hasil</h2>`, true);
+    if (S.counts == null || P.lastQ !== i) {
+      // Biasanya hanya 1–2 detik. Bila lebih lama, tampilkan hasil dari jawaban sendiri agar HP tidak macet.
+      if (!revealWait || revealWait.i !== i) revealWait = { i, t: Date.now() };
+      const waited = Date.now() - revealWait.t;
+      clearTimeout(revealTimer); revealTimer = setTimeout(() => { sig = ""; renderLive(); }, 2500);
+      if (waited < 5000) return setView(`<div class="big-icon wait">…</div><h2>Menghitung hasil</h2>`, true);
+      const mine = myAns[i];
+      if (S.counts != null && isChoice(q) && Number.isInteger(S.correct)) {
+        const ok = mine === S.correct;
+        return setView(`<div class="big-icon ${ok ? "ok" : "no"}">${mine == null ? "–" : ok ? "✓" : "✕"}</div><h1>${mine == null ? "Tidak menjawab" : ok ? "Benar!" : "Kurang tepat"}</h1>${ok ? "" : `<p class="muted">Jawaban benar: ${rightText()}</p>`}<p class="small muted">Skor sedang diperbarui oleh dosen.</p>`, true);
+      }
+      return setView(`<div class="big-icon wait">…</div><h2>${mine == null ? "Menunggu hasil" : "Jawabanmu sudah terkirim"}</h2><p class="small muted">Dosen sedang menghitung skor. Lihat layar kelas; HP ini akan menyesuaikan sendiri.</p>`, true);
+    }
+    clearTimeout(revealTimer);
     if (themed) {
       const right = rightText();
       return setView(`${meWidget(th, S, P)}<h1>${P.lastCorrect ? "Benar!" : P.answered ? "Kurang tepat" : "Tidak menjawab"}</h1>
@@ -215,6 +230,16 @@ function renderLive() {
       <p class="muted">${P.correct || 0} dari ${S.total} soal dijawab benar.</p>
       <button class="btn" id="out">Keluar</button>`, true) || bindOut();
   }
+}
+// Dosen memakai versi aplikasi yang lebih baru: muat ulang halaman ini sekali agar tidak memakai file lama.
+function needsUpdate(S) {
+  if (!S?.appVersion || S.appVersion === VERSION) return false;
+  let tried = null; try { tried = sessionStorage.getItem("alv:upd"); } catch {}
+  if (tried === S.appVersion) return false;
+  try { sessionStorage.setItem("alv:upd", S.appVersion); } catch {}
+  setView(`<div class="big-icon wait">↻</div><h2>Memperbarui aplikasi…</h2>`, true);
+  location.replace(location.pathname + "?pin=" + encodeURIComponent(pin) + "&v=" + encodeURIComponent(S.appVersion));
+  return true;
 }
 function timeUp() {
   clearInterval(tick); tick = null;

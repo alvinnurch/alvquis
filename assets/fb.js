@@ -4,9 +4,9 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
-  serverTimestamp, writeBatch, query, where, orderBy, increment, Timestamp, deleteField, connectFirestoreEmulator,
+  serverTimestamp, writeBatch, query, where, orderBy, increment, Timestamp, deleteField, getCountFromServer, connectFirestoreEmulator,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, USE_EMULATOR } from "./firebase-config.js";
+import { firebaseConfig, USE_EMULATOR } from "./firebase-config.js?v=2026.10.01-r3";
 
 export const configured = !String(firebaseConfig.apiKey || "").startsWith("GANTI");
 
@@ -21,7 +21,7 @@ if (app && USE_EMULATOR) {
 export {
   signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut,
   doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
-  serverTimestamp, writeBatch, query, where, orderBy, increment, Timestamp, deleteField,
+  serverTimestamp, writeBatch, query, where, orderBy, increment, Timestamp, deleteField, getCountFromServer,
 };
 
 /** Resolves with the current user once auth has initialised (may be null). */
