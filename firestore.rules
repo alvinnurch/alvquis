@@ -1,0 +1,137 @@
+rules_version = '2';
+
+// AlvQuis — aturan keamanan Firestore.
+// Salin seluruh isi file ini ke Firebase Console → Firestore → Rules → Publish.
+//
+// Siapa pun yang masuk dengan akun Google dan mengisi profil dosen bisa membuat kuis.
+// Setiap dosen HANYA bisa membaca dan mengubah bank soal, sesi, jawaban, dan nilai miliknya sendiri.
+// Mahasiswa masuk secara anonim (tanpa akun) dan hanya bisa menulis data dirinya sendiri.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+
+    // Akun Google yang emailnya terverifikasi (bukan akun anonim mahasiswa).
+    function isGoogle() {
+      return signedIn()
+        && request.auth.token.firebase.sign_in_provider == 'google.com'
+        && request.auth.token.get('email_verified', false) == true;
+    }
+    // Dosen = akun Google yang sudah mengisi profil di /dosen/{uid}.
+    function isDosen() {
+      return isGoogle() && exists(/databases/$(database)/documents/dosen/$(request.auth.uid));
+    }
+    function sess(pin) {
+      return get(/databases/$(database)/documents/sessions/$(pin)).data;
+    }
+    // Pemilik sesi = dosen yang membuatnya.
+    function ownsSession(pin) {
+      return isGoogle() && sess(pin).ownerUid == request.auth.uid;
+    }
+
+    // ---------- Profil dosen (pendaftaran) ----------
+    match /dosen/{uid} {
+      allow read, delete: if isGoogle() && request.auth.uid == uid;
+      allow create, update: if isGoogle() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['name', 'institution', 'email', 'createdAt'])
+        && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100
+        && request.resource.data.institution is string && request.resource.data.institution.size() > 0 && request.resource.data.institution.size() <= 120
+        && request.resource.data.email == request.auth.token.email;
+    }
+
+    // ---------- Bank soal (berisi kunci jawaban): hanya pemiliknya ----------
+    match /quizzes/{quizId} {
+      allow read, delete: if isDosen() && resource.data.ownerUid == request.auth.uid;
+      allow update: if isDosen() && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow create: if isDosen() && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /sessions/{pin} {
+      // Mahasiswa hanya bisa membuka sesi bila tahu PIN-nya (get), tidak bisa melihat daftar sesi.
+      allow get: if signedIn();
+      // Dosen hanya bisa mendaftar sesi miliknya sendiri (query harus memakai where ownerUid == uid).
+      allow list: if isDosen() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isDosen() && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if isGoogle() && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow delete: if isGoogle() && resource.data.ownerUid == request.auth.uid;
+
+      // Salinan soal lengkap + kunci + garam acak sesi: hanya pemilik sesi.
+      match /private/{docId} {
+        allow read, write: if ownsSession(pin);
+      }
+
+      // ---------- MODE LIVE ----------
+      match /players/{uid} {
+        allow read: if ownsSession(pin) || (signedIn() && request.auth.uid == uid);
+        allow create: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['name', 'nim', 'avatar', 'score', 'joinedAt'])
+          && (!('avatar' in request.resource.data) || (request.resource.data.avatar is int
+              && request.resource.data.avatar >= 0 && request.resource.data.avatar < 12))
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 60
+          && request.resource.data.nim is string && request.resource.data.nim.size() <= 30
+          && request.resource.data.score == 0
+          && request.resource.data.joinedAt == request.time
+          && sess(pin).mode == 'live' && sess(pin).status != 'ended';
+        // Skor hanya dihitung dan ditulis oleh dosen pemilik sesi.
+        allow update, delete: if ownsSession(pin);
+      }
+
+      match /answers/{answerId} {
+        allow read: if ownsSession(pin) || (signedIn() && resource.data.uid == request.auth.uid);
+        // Satu jawaban per soal, hanya selama soal itu sedang tayang, waktu dicap oleh server.
+        allow create: if signedIn()
+          && request.resource.data.keys().hasOnly(['uid', 'q', 'choice', 'at'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.q is int
+          && answerId == request.auth.uid + '_' + string(request.resource.data.q)
+          && ((request.resource.data.choice is int
+                && request.resource.data.choice >= 0 && request.resource.data.choice < 4)
+              || (request.resource.data.choice is list            // soal mengurutkan / mencocokkan
+                && request.resource.data.choice.size() >= 2 && request.resource.data.choice.size() <= 6))
+          && request.resource.data.at == request.time
+          && sess(pin).status == 'question'
+          && sess(pin).current == request.resource.data.q
+          && exists(/databases/$(database)/documents/sessions/$(pin)/players/$(request.auth.uid));
+        allow update: if false;
+        allow delete: if ownsSession(pin);
+      }
+
+      // ---------- MODE MANDIRI ----------
+      match /submissions/{uid} {
+        allow read: if ownsSession(pin) || (signedIn() && request.auth.uid == uid);
+
+        allow create: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['name', 'nim', 'answers', 'status', 'startedAt', 'updatedAt'])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 60
+          && request.resource.data.nim is string && request.resource.data.nim.size() <= 30
+          && request.resource.data.answers is map && request.resource.data.answers.size() == 0
+          && request.resource.data.status == 'progress'
+          && request.resource.data.startedAt == request.time
+          && request.resource.data.updatedAt == request.time
+          && sess(pin).mode == 'mandiri' && sess(pin).status == 'open'
+          && (sess(pin).deadline == null || request.time < sess(pin).deadline);
+
+        // Mahasiswa hanya boleh mengubah jawaban & status miliknya sendiri,
+        // selama ujian dibuka dan durasinya belum habis (+1 menit toleransi).
+        allow update: if ownsSession(pin) || (
+          signedIn() && request.auth.uid == uid
+          && resource.data.status == 'progress'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answers', 'status', 'updatedAt', 'submittedAt'])
+          && request.resource.data.answers is map
+          && request.resource.data.answers.size() <= 300
+          && request.resource.data.status in ['progress', 'submitted']
+          && request.resource.data.updatedAt == request.time
+          && (request.resource.data.status == 'progress' || request.resource.data.submittedAt == request.time)
+          && sess(pin).status == 'open'
+          && request.time < resource.data.startedAt + duration.value(sess(pin).durationMin + 1, 'm')
+          && (sess(pin).deadline == null || request.time < sess(pin).deadline + duration.value(1, 'm'))
+        );
+        allow delete: if ownsSession(pin);
+      }
+    }
+  }
+}

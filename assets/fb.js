@@ -1,0 +1,32 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {
+  getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut, connectAuthEmulator,
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {
+  getFirestore, doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
+  serverTimestamp, writeBatch, query, where, orderBy, increment, Timestamp, deleteField, connectFirestoreEmulator,
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { firebaseConfig, USE_EMULATOR } from "./firebase-config.js";
+
+export const configured = !String(firebaseConfig.apiKey || "").startsWith("GANTI");
+
+export const app = configured ? initializeApp(firebaseConfig) : null;
+export const auth = app ? getAuth(app) : null;
+export const db = app ? getFirestore(app) : null;
+if (app && USE_EMULATOR) {
+  connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
+  connectFirestoreEmulator(db, "127.0.0.1", 8080);
+}
+
+export {
+  signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut,
+  doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
+  serverTimestamp, writeBatch, query, where, orderBy, increment, Timestamp, deleteField,
+};
+
+/** Resolves with the current user once auth has initialised (may be null). */
+export function authReady() {
+  return new Promise((resolve) => {
+    const off = onAuthStateChanged(auth, (u) => { off(); resolve(u); });
+  });
+}

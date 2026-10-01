@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AlvQuis · Dosen</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=JetBrains+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-in">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>AlvQuis</span></div>
+      <nav class="tabs" id="tabs" hidden>
+        <span class="small muted" id="who-dosen" style="align-self:center;margin-right:6px"></span>
+        <button class="tab" data-tab="soal" aria-selected="true">Bank soal</button>
+        <button class="tab" data-tab="sesi" aria-selected="false">Sesi &amp; nilai</button>
+        <button class="tab" id="logout">Keluar</button>
+      </nav>
+    </div>
+  </header>
+  <main class="wrap" id="view" aria-live="polite"></main>
+  <div id="stage" class="stage" hidden></div>
+
+  <dialog id="dlg"></dialog>
+
+  <script type="module" src="assets/dosen.js"></script>
+</body>
+</html>
