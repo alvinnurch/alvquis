@@ -1,5 +1,5 @@
 // Komponen HP untuk soal Mengurutkan dan Mencocokkan (ketuk, tanpa seret).
-import { esc } from "./ui.js?v=2026.10.01-r3";
+import { esc } from "./ui.js?v=2026.10.01-r4";
 
 /**
  * Pasang komponen jawaban di `root`.

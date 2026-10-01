@@ -2,15 +2,16 @@ import {
   configured, auth, db, authReady, GoogleAuthProvider, signInWithPopup, signOut,
   doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
   serverTimestamp, writeBatch, query, where, increment, Timestamp, getCountFromServer,
-} from "./fb.js?v=2026.10.01-r3";
-import { ADMIN_EMAILS } from "./firebase-config.js?v=2026.10.01-r3";
-import { esc, shape, toast, LETTERS, OPT_CLASS, pointsFor, fmtDate, setupNotice } from "./ui.js?v=2026.10.01-r3";
-import { SAMPLE_QUIZ, SAMPLE_KIDS } from "./sample-quiz.js?v=2026.10.01-r3";
-import { THEMES, THEME_KEYS, themeOf, arena, avatar, gameState } from "./themes.js?v=2026.10.01-r3";
-import { Sound } from "./sound.js?v=2026.10.01-r3";
-import { VERSION } from "./version.js?v=2026.10.01-r3";
-import { isChoice, isCorrect, publicQ, solutionList, newSalt } from "./qtypes.js?v=2026.10.01-r3";
-import { stageSeq, stageSolution } from "./qwidgets.js?v=2026.10.01-r3";
+} from "./fb.js?v=2026.10.01-r4";
+import * as CFG from "./firebase-config.js?v=2026.10.01-r4";
+const ADMIN_EMAILS = Array.isArray(CFG.ADMIN_EMAILS) ? CFG.ADMIN_EMAILS : [];
+import { esc, shape, toast, LETTERS, OPT_CLASS, pointsFor, fmtDate, setupNotice } from "./ui.js?v=2026.10.01-r4";
+import { SAMPLE_QUIZ, SAMPLE_KIDS } from "./sample-quiz.js?v=2026.10.01-r4";
+import { THEMES, THEME_KEYS, themeOf, arena, avatar, gameState } from "./themes.js?v=2026.10.01-r4";
+import { Sound } from "./sound.js?v=2026.10.01-r4";
+import { VERSION } from "./version.js?v=2026.10.01-r4";
+import { isChoice, isCorrect, publicQ, solutionList, newSalt } from "./qtypes.js?v=2026.10.01-r4";
+import { stageSeq, stageSolution } from "./qwidgets.js?v=2026.10.01-r4";
 // Firestore tidak menerima array di dalam array: pasangan disimpan sebagai {l, r}.
 const normQ = (q) => (q.kind === "cocok" && q.pairs?.length && !Array.isArray(q.pairs[0]) ? { ...q, pairs: q.pairs.map((p) => [p.l, p.r]) } : q);
 
@@ -29,7 +30,8 @@ let rekapPin = null;
 const unsubs = [];
 
 /* ---------------------------------------------------------------- boot */
-boot();
+window.__alvOK = true;
+boot().catch((e) => window.__alvFail?.(e));
 async function boot() {
   if (!configured) { $view.innerHTML = setupNotice(); return; }
   const u = await authReady();

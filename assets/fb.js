@@ -6,7 +6,7 @@ import {
   getFirestore, doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
   serverTimestamp, writeBatch, query, where, orderBy, increment, Timestamp, deleteField, getCountFromServer, connectFirestoreEmulator,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, USE_EMULATOR } from "./firebase-config.js?v=2026.10.01-r3";
+import { firebaseConfig, USE_EMULATOR } from "./firebase-config.js?v=2026.10.01-r4";
 
 export const configured = !String(firebaseConfig.apiKey || "").startsWith("GANTI");
 
@@ -27,6 +27,9 @@ export {
 /** Resolves with the current user once auth has initialised (may be null). */
 export function authReady() {
   return new Promise((resolve) => {
-    const off = onAuthStateChanged(auth, (u) => { off(); resolve(u); });
+    let done = false;
+    const off = onAuthStateChanged(auth, (u) => { if (done) return; done = true; off(); resolve(u); });
+    // Jangan biarkan halaman kosong bila Firebase Auth lambat/terblokir.
+    setTimeout(() => { if (!done) { done = true; resolve(auth.currentUser || null); } }, 8000);
   });
 }

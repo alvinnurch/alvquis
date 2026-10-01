@@ -1,13 +1,14 @@
 import {
   configured, auth, db, authReady, signInAnonymously,
   doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, deleteField,
-} from "./fb.js?v=2026.10.01-r3";
-import { esc, shape, toast, LETTERS, OPT_CLASS, shuffledIdx, fmtDate, mmss, setupNotice } from "./ui.js?v=2026.10.01-r3";
-import { THEMES, themeOf, avatar, avatarPicker, meWidget, themedFeedback } from "./themes.js?v=2026.10.01-r3";
-import { isChoice } from "./qtypes.js?v=2026.10.01-r3";
-import { VERSION } from "./version.js?v=2026.10.01-r3";
-import { mountSeq, solutionInline } from "./qwidgets.js?v=2026.10.01-r3";
+} from "./fb.js?v=2026.10.01-r4";
+import { esc, shape, toast, LETTERS, OPT_CLASS, shuffledIdx, fmtDate, mmss, setupNotice } from "./ui.js?v=2026.10.01-r4";
+import { THEMES, themeOf, avatar, avatarPicker, meWidget, themedFeedback } from "./themes.js?v=2026.10.01-r4";
+import { isChoice } from "./qtypes.js?v=2026.10.01-r4";
+import { VERSION } from "./version.js?v=2026.10.01-r4";
+import { mountSeq, solutionInline } from "./qwidgets.js?v=2026.10.01-r4";
 
+window.__alvOK = true;
 const $view = document.getElementById("view");
 const $who = document.getElementById("who");
 const store = {

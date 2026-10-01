@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=JetBrains+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="assets/style.css?v=2026.10.01-r3">
+<link rel="stylesheet" href="assets/style.css?v=2026.10.01-r4">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -22,11 +22,33 @@
       </nav>
     </div>
   </header>
-  <main class="wrap" id="view" aria-live="polite"></main>
+  <main class="wrap" id="view" aria-live="polite"><p class="muted" style="text-align:center;margin-top:48px">Memuat AlvQuis…</p></main>
   <div id="stage" class="stage" hidden></div>
 
   <dialog id="dlg"></dialog>
 
-  <script type="module" src="assets/dosen.js?v=2026.10.01-r3"></script>
+  <script>
+  // Penjaga: bila skrip utama gagal dimuat, tampilkan pesan yang jelas (bukan layar kosong).
+  (function () {
+    var last = "";
+    window.addEventListener("error", function (e) {
+      var t = e.target;
+      if (t && t !== window && (t.src || t.href)) last = "File tidak ditemukan: " + (t.src || t.href);
+      else if (e.message) last = e.message + (e.filename ? " (" + e.filename.split("/").pop() + ")" : "");
+    }, true);
+    window.addEventListener("unhandledrejection", function (e) { last = String((e.reason && (e.reason.code || e.reason.message)) || e.reason); });
+    window.__alvFail = function (err) { show(String((err && (err.code || err.message)) || err)); };
+    function show(msg) {
+      var v = document.getElementById("view"); if (!v) return;
+      v.innerHTML = '<div class="notice" style="max-width:560px;margin:40px auto;text-align:left">' +
+        '<b>AlvQuis belum bisa dimuat.</b><br>' +
+        'Biasanya karena ada file yang belum ter-upload ke GitHub, atau peramban masih memakai file lama.<br><br>' +
+        '<small style="opacity:.75;word-break:break-word">' + (msg || "Skrip utama tidak berjalan.").replace(/</g, "&lt;") + '</small><br><br>' +
+        '<button class="btn primary" onclick="location.reload()">Muat ulang</button></div>';
+    }
+    setTimeout(function () { if (!window.__alvOK) show(last); }, 10000);
+  })();
+  </script>
+  <script type="module" src="assets/dosen.js?v=2026.10.01-r4"></script>
 </body>
 </html>
