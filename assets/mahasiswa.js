@@ -90,7 +90,9 @@ function renderIdentity() {
     store.set("profile", { name, nim, avatar: av });
     try {
       if (S.mode === "live") {
-        await setDoc(doc(db, "sessions", pin, "players", uid), { name, nim, avatar: av, score: 0, joinedAt: serverTimestamp() });
+        const t0 = Date.now();
+        await setDoc(doc(db, "sessions", pin, "players", uid), { name, nim, avatar: av, score: 0, joinedAt: serverTimestamp(), ...(S.ownerUid ? { ownerUid: S.ownerUid } : {}) });
+        joinMid = (t0 + Date.now()) / 2;
         startLive();
       } else {
         renderIntro(name, nim);
@@ -100,26 +102,49 @@ function renderIdentity() {
 }
 
 /* ================================================================ LIVE */
-let P = null, myAns = {}, qSeenAt = 0, lastQ = -1;
+let P = null, myAns = {}, qSeenAt = 0, lastQ = -1, sig = "", joinMid = null, offset = null, retry = null;
+
+// Selisih jam HP dengan jam server Firebase, diukur dari cap waktu saat bergabung.
+// Dipakai agar hitung mundur di HP sama dengan di layar proyektor.
+function questionEnd(q) {
+  const st = S.questionStartedAt?.toMillis?.();
+  if (st != null && offset != null) {
+    const end = st - offset + q.time * 1000, rem = end - Date.now();
+    if (rem <= q.time * 1000 + 1500 && rem > -15000) return end;
+  }
+  return qSeenAt + q.time * 1000;
+}
 
 function startLive() {
-  stopAll();
+  stopAll(); clearTimeout(retry); sig = "";
   myAns = store.get("ans:" + pin, {});
+  offset = store.get("off:" + pin, null);
+  const lost = (e) => {
+    console.error(e);
+    setView(`<div class="big-icon wait">…</div><h2>Menyambung ulang…</h2><p class="muted small">Koneksi ke kuis terputus (${esc(e.code || e.message)}). Mencoba lagi otomatis.</p>`, true);
+    stopAll(); retry = setTimeout(startLive, 3000);
+  };
   unsubs.push(onSnapshot(doc(db, "sessions", pin), (s) => {
     S = s.data(); if (!S) return renderJoin("", "Sesi telah dihapus oleh dosen.");
     if (S.status === "question" && S.current !== lastQ) { lastQ = S.current; qSeenAt = Date.now(); }
     renderLive();
-  }));
+  }, lost));
   unsubs.push(onSnapshot(doc(db, "sessions", pin, "players", uid), (s) => {
     P = s.data() || null; $who.textContent = P ? `${P.name} · ${(P.score || 0).toLocaleString("id-ID")}` : "";
+    if (P?.joinedAt?.toMillis && joinMid != null) {   // baru saja bergabung: ukur selisih jam sekarang
+      offset = P.joinedAt.toMillis() - joinMid; joinMid = null; store.set("off:" + pin, offset);
+    }
     renderLive();
-  }));
+  }, lost));
 }
 
 function renderLive() {
   if (!S || !P) return;
-  clearInterval(tick); tick = null;
   const q = S.question, i = S.current, th = themeOf(S), themed = th !== "klasik";
+  // Gambar ulang hanya bila keadaan berubah, agar jawaban yang sedang disusun tidak hilang.
+  const key = JSON.stringify([S.status, i, myAns[i] != null, P.lastQ, P.score, P.rank, P.wrong, S.counts != null, S.questionStartedAt?.toMillis?.() ?? 0]);
+  if (key === sig) return; sig = key;
+  clearInterval(tick); tick = null;
   if (S.status === "lobby") {
     return setView(`${avatar(P.avatar, "happy", "big")}<h1>Kamu sudah masuk!</h1><p class="muted">Lihat namamu di layar kelas. Kuis dimulai sebentar lagi.</p><p class="scorebadge">${esc(P.name)}</p>${themed ? `<div class="card stack tight"><b>Tema: ${esc(THEMES[th].name)}</b><span class="small muted">${esc(THEMES[th].desc)}</span>${THEMES[th].lives ? `<span class="small muted">Kamu punya ${S.lives || 3} ${th === "balon" ? "balon" : "nyawa"}.</span>` : ""}</div>` : ""}`, true);
   }
@@ -132,35 +157,39 @@ function renderLive() {
     if (!isChoice(q)) {
       setView(`${bar}<div id="seq" class="stack tight"></div><button class="btn primary lg block seq-submit" id="send" disabled>Kirim jawaban</button>`);
       const clk = $view.querySelector("#clk"), send = $view.querySelector("#send");
-      tick = setInterval(() => { const left = q.time - (Date.now() - qSeenAt) / 1000; clk.textContent = Math.max(0, Math.ceil(left)); clk.classList.toggle("warn", left <= 5); }, 250);
+      const end = questionEnd(q);
+      tick = setInterval(() => {
+        const left = (end - Date.now()) / 1000;
+        clk.textContent = Math.max(0, Math.ceil(left)); clk.classList.toggle("warn", left <= 5);
+        if (left <= 0) timeUp();
+      }, 200);
       let val = null;
       mountSeq($view.querySelector("#seq"), q, null, (v) => { val = v; send.disabled = !v; });
       send.onclick = async () => {
         send.disabled = true; send.textContent = "Mengirim…";
         try {
           await setDoc(doc(db, "sessions", pin, "answers", `${uid}_${i}`), { uid, q: i, choice: val, at: serverTimestamp() });
-          myAns[i] = val; store.set("ans:" + pin, myAns); renderLive();
-        } catch (e) { toast("Jawaban tidak terkirim — waktu sudah habis."); console.error(e); send.textContent = "Kirim jawaban"; }
+          myAns[i] = val; store.set("ans:" + pin, myAns); sig = ""; renderLive();
+        } catch (e) { answerFailed(e); }
       };
       return;
     }
     const n = q.options.length;
     setView(`${bar}
       <div class="m-tiles">${q.options.map((o, k) => `<button class="m-tile ${OPT_CLASS[k]}" data-k="${k}" style="${n === 3 && k === 2 ? "grid-column:span 2" : ""}">${shape(k)}<span>${esc(o)}</span></button>`).join("")}</div>`);
-    const clk = $view.querySelector("#clk");
+    const clk = $view.querySelector("#clk"), end = questionEnd(q);
     tick = setInterval(() => {
-      const left = q.time - (Date.now() - qSeenAt) / 1000;
+      const left = (end - Date.now()) / 1000;
       clk.textContent = Math.max(0, Math.ceil(left)); clk.classList.toggle("warn", left <= 5);
-    }, 250);
+      if (left <= 0) timeUp();
+    }, 200);
     $view.querySelectorAll(".m-tile").forEach((b) => b.onclick = async () => {
       const k = +b.dataset.k;
       $view.querySelectorAll(".m-tile").forEach((x) => { x.disabled = true; if (x !== b) x.style.opacity = ".3"; });
       try {
         await setDoc(doc(db, "sessions", pin, "answers", `${uid}_${i}`), { uid, q: i, choice: k, at: serverTimestamp() });
-        myAns[i] = k; store.set("ans:" + pin, myAns); renderLive();
-      } catch (e) {
-        toast("Jawaban tidak terkirim — waktu sudah habis."); console.error(e);
-      }
+        myAns[i] = k; store.set("ans:" + pin, myAns); sig = ""; renderLive();
+      } catch (e) { answerFailed(e); }
     });
     return;
   }
@@ -186,6 +215,16 @@ function renderLive() {
       <p class="muted">${P.correct || 0} dari ${S.total} soal dijawab benar.</p>
       <button class="btn" id="out">Keluar</button>`, true) || bindOut();
   }
+}
+function timeUp() {
+  clearInterval(tick); tick = null;
+  setView(`<div class="big-icon wait">⏱</div><h2>Waktu habis</h2><p class="muted">Menunggu dosen membuka jawaban…</p>`, true);
+}
+function answerFailed(e) {
+  console.error(e);
+  const late = e?.code === "permission-denied";
+  setView(`<div class="big-icon no">!</div><h2>${late ? "Jawaban terlambat" : "Jawaban gagal terkirim"}</h2><p class="muted">${late ? "Soal sudah ditutup sebelum jawabanmu sampai." : "Periksa koneksi internet. Kalau soal masih berjalan, coba jawab lagi."}</p>`, true);
+  if (!late) { sig = ""; setTimeout(renderLive, 1500); }
 }
 function rightText() {
   const q = S.question;
@@ -220,7 +259,7 @@ function renderIntro(name, nim) {
   $view.querySelector("#go").onclick = async (e) => {
     e.target.disabled = true;
     try {
-      await setDoc(doc(db, "sessions", pin, "submissions", uid), { name, nim, answers: {}, status: "progress", startedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      await setDoc(doc(db, "sessions", pin, "submissions", uid), { name, nim, answers: {}, status: "progress", startedAt: serverTimestamp(), updatedAt: serverTimestamp(), ...(S.ownerUid ? { ownerUid: S.ownerUid } : {}) });
       startMandiri();
     } catch (err) { e.target.disabled = false; toast("Tidak bisa memulai. Ujian mungkin sudah ditutup."); console.error(err); }
   };
@@ -231,7 +270,8 @@ function startMandiri() {
   const n = S.questions.length;
   order = S.shuffleQ ? shuffledIdx(n, uid + pin) : [...Array(n).keys()];
   cur = store.get("cur:" + pin, 0);
-  unsubs.push(onSnapshot(doc(db, "sessions", pin), (s) => { S = s.data(); if (!S) return renderJoin("", "Sesi telah dihapus oleh dosen."); renderMandiri(); }));
+  const lost = (e) => { console.error(e); toast("Koneksi terputus (" + (e.code || e.message) + "). Memuat ulang…"); setTimeout(() => startMandiri(), 3000); };
+  unsubs.push(onSnapshot(doc(db, "sessions", pin), (s) => { S = s.data(); if (!S) return renderJoin("", "Sesi telah dihapus oleh dosen."); renderMandiri(); }, lost));
   unsubs.push(onSnapshot(doc(db, "sessions", pin, "submissions", uid), (s) => {
     const first = !SUB; SUB = s.data() || null;
     if (!SUB) return;
@@ -242,7 +282,7 @@ function startMandiri() {
     // Gambar ulang hanya bila perlu, agar komponen urut/cocok yang sedang diisi tidak ter-reset.
     const st = SUB.status + "|" + (SUB.nilai ?? "");
     if (first || st !== lastSubState) { lastSubState = st; renderMandiri(); }
-  }));
+  }, lost));
 }
 
 function optOrder(qi) {

@@ -214,8 +214,8 @@ export function meWidget(themeKey, s, me) {
 }
 export function themedFeedback(themeKey, s, me) {
   const g = gameState(me, s);
-  if (themeKey === "robot") return g.justOut ? "Nyam! Kamu dimakan robot!" : g.justHit ? (g.out ? "Tetap semangat!" : "Aduh, nyawamu berkurang!") : "Robot gagal menangkapmu!";
-  if (themeKey === "balon") return g.justHit ? (g.out ? "Balon terakhir meletus!" : "Dor! Satu balon meletus.") : "Balonmu tetap terbang!";
+  if (themeKey === "robot") return g.justOut ? "Nyam! Kamu dimakan robot!" : g.justHit ? (g.out ? "Tetap semangat!" : "Aduh, nyawamu berkurang!") : g.out ? "Jawabanmu benar! Nilainya tetap dihitung." : "Robot gagal menangkapmu!";
+  if (themeKey === "balon") return g.justHit ? (g.out ? "Balon terakhir meletus!" : "Dor! Satu balon meletus.") : g.out ? "Jawabanmu benar! Nilainya tetap dihitung." : "Balonmu tetap terbang!";
   if (themeKey === "roket") return g.justRight ? "Roketmu melaju!" : "Roketmu tertahan.";
   if (themeKey === "kebun") return g.justRight ? "Tanamanmu tumbuh!" : "Hujan sebentar, coba lagi ya.";
   return "";

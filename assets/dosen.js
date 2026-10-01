@@ -597,7 +597,10 @@ function downloadCSV(s, Q, rows, salt) {
 }
 
 /* ================================================================ PANGGUNG (live host) */
-const H = { pin: null, s: null, Q: [], players: [], answers: [], unsubs: [], tick: null, qStartLocal: 0, revealing: false };
+// GRACE: setelah hitung mundur habis, panggung menunggu sebentar agar jawaban yang masih "di jalan"
+// (sinyal HP lambat) tetap diterima sebelum soal ditutup.
+const GRACE = 2500;
+const H = { pin: null, s: null, Q: [], players: [], answers: [], unsubs: [], tick: null, qStartLocal: 0, revealing: false, localStart: null, busy: false };
 
 async function openStage(pin) {
   closeStage();
@@ -606,20 +609,26 @@ async function openStage(pin) {
   H.Q = (k.data()?.questions || []).map(normQ); H.salt = k.data()?.salt;
   $stage.hidden = false; document.body.style.overflow = "hidden";
   $stage.innerHTML = `<p>Memuat…</p>`;
+  const lost = (e) => { console.error(e); toast("Koneksi panggung terputus (" + (e.code || e.message) + "). Menyambung ulang…"); setTimeout(() => { if (H.pin === pin) openStage(pin); }, 3000); };
   H.unsubs.push(onSnapshot(doc(db, "sessions", pin), (snap) => {
     const prev = H.s; H.s = snap.data();
     if (!H.s) return;
     if (H.s.status === "question" && (!prev || prev.status !== "question" || prev.current !== H.s.current)) {
       watchAnswers(H.s.current);
+      // Pakai jam laptop saat tombol ditekan (tidak terpengaruh jam laptop yang meleset).
+      // Bila panggung dibuka ulang di tengah soal, pakai cap waktu server.
       const started = H.s.questionStartedAt?.toMillis?.();
-      H.qStartLocal = started && Math.abs(Date.now() - started) < 5 * 60e3 ? started : Date.now();
+      H.qStartLocal = H.localStart?.i === H.s.current ? H.localStart.t
+        : started && Math.abs(Date.now() - started) < 60e3 ? started : Date.now();
     }
     renderStage();
-  }));
+  }, lost));
   H.unsubs.push(onSnapshot(collection(db, "sessions", pin, "players"), (snap) => {
     H.players = snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
+    // Saat soal berjalan, cukup perbarui angka peserta (tidak menggambar ulang & mengulang timer).
+    if (H.s?.status === "question" && $stage.querySelector("#tleft")) { const c = $stage.querySelector(".stage-top .small"); if (c) c.textContent = H.players.length + " peserta"; return; }
     renderStage();
-  }));
+  }, lost));
 }
 function closeStage() {
   H.unsubs.forEach((f) => f()); H.unsubs = []; H.ansUnsub?.(); H.ansUnsub = null;
@@ -636,7 +645,7 @@ function watchAnswers(qi) {
     const ar = $stage.querySelector("#arena-mini");
     if (ar && H.s) ar.innerHTML = arena(themeOf(H.s), H.s, PL(), { mode: "mini", answeredIds: new Set(H.answers.map((a) => a.uid)) });
     if (H.s?.status === "question" && H.players.length && H.answers.length >= H.players.length) reveal();
-  });
+  }, (e) => toast("Gagal membaca jawaban: " + (e.code || e.message)));
 }
 
 function soundFor(s, players, force) {
@@ -689,8 +698,9 @@ function renderStage() {
       const t = $stage.querySelector("#tleft"), tm = $stage.querySelector("#timer");
       if (t) t.textContent = Math.max(0, Math.ceil(left));
       if (tm) tm.style.setProperty("--p", Math.max(0, left / q.time));
+      if (left <= 0) { const l = $stage.querySelector(".answered .l"); if (l) l.textContent = "jawaban · menutup…"; }
       Sound.setUrgency(1 - left / q.time); Sound.tick(left);
-      if (left <= 0) reveal();
+      if (left <= -GRACE / 1000) reveal();
     }, 200);
   } else if (s.status === "reveal" && q) {
     const counts = s.counts || [0, 0, 0, 0];
@@ -741,13 +751,17 @@ function topN(scores, n) {
 function PL() { return H.players.map((p) => ({ ...p, id: p.uid, joinedAt: p.joinedAt?.toMillis?.() || 0 })); }
 
 async function nextQuestion() {
+  if (H.busy) return; H.busy = true;
+  try { await nextQuestionInner(); } catch (e) { toast("Gagal: " + (e.code || e.message)); } finally { H.busy = false; }
+}
+async function nextQuestionInner() {
   const s = H.s, i = s.current + 1;
   if (i >= H.Q.length) {
     await updateDoc(doc(db, "sessions", H.pin), { status: "ended", leaderboard: topN(null, 5), question: null });
     return;
   }
   const q = H.Q[i];
-  H.revealing = false;
+  H.revealing = false; H.localStart = { i, t: Date.now() };
   await updateDoc(doc(db, "sessions", H.pin), {
     status: "question", current: i, correct: null, counts: null,
     question: { ...publicQ(q, i, H.salt), time: q.time, points: q.points }, solution: null,

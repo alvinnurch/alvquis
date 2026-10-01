@@ -3,12 +3,12 @@
 //  Firebase Console → Project settings → Your apps → Web app → SDK setup (Config)
 // ============================================================
 export const firebaseConfig = {
-  apiKey: "AIzaSyAjHVPUWQkd7uhbYTL51mVIXWY7VAqYHuY",
-  authDomain: "alvquis-ee6c9.firebaseapp.com",
-  projectId: "alvquis-ee6c9",
-  storageBucket: "alvquis-ee6c9.firebasestorage.app",
-  messagingSenderId: "1090723365642",
-  appId: "1:1090723365642:web:d18983813e4fd2e44a70f3"
+  apiKey: "GANTI_API_KEY",
+  authDomain: "GANTI.firebaseapp.com",
+  projectId: "GANTI_PROJECT_ID",
+  storageBucket: "GANTI.appspot.com",
+  messagingSenderId: "000000000000",
+  appId: "GANTI_APP_ID",
 };
 
 // Dosen tidak perlu didaftarkan di sini: siapa pun bisa mendaftar lewat halaman dosen.html

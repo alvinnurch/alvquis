@@ -208,7 +208,8 @@ Jika semua langkah ini berjalan, aplikasi siap dipakai di kelas. Hapus sesi uji 
 | **"Gagal memuat soal: permission-denied"** | Sama seperti di atas. Bila Rules sudah benar, keluar lalu masuk lagi. |
 | Mahasiswa: **"Tidak bisa terhubung"** | Langkah A3 (Anonymous) belum aktif, atau HP tidak ada internet. |
 | Mahasiswa: **"PIN tidak ditemukan"** | PIN salah ketik, atau sesi sudah dihapus dosen. |
-| Mahasiswa: **"Jawaban tidak terkirim — waktu sudah habis"** | Normal. Jawaban dikirim setelah soal ditutup. |
+| Mahasiswa: **"Waktu habis"** atau **"Jawaban terlambat"** | Normal. Hitung mundur di HP sudah disamakan dengan layar proyektor, dan panggung menunggu 2,5 detik setelah waktu habis agar jawaban dari sinyal lambat tetap masuk. |
+| Mahasiswa: **"Menyambung ulang…"** | Sinyal HP sempat putus. Halaman menyambung lagi sendiri dalam 3 detik. |
 | Perubahan file tidak muncul | GitHub Pages butuh 1–2 menit. Muat ulang paksa dengan `Cmd+Shift+R`. |
 | Pesan **quota exceeded / resource-exhausted** | Batas harian gratis tercapai (lihat bagian H). Kuota pulih otomatis keesokan hari. |
 

@@ -66,7 +66,8 @@ service cloud.firestore {
       match /players/{uid} {
         allow read: if ownsSession(pin) || (signedIn() && request.auth.uid == uid);
         allow create: if signedIn() && request.auth.uid == uid
-          && request.resource.data.keys().hasOnly(['name', 'nim', 'avatar', 'score', 'joinedAt'])
+          && request.resource.data.keys().hasOnly(['name', 'nim', 'avatar', 'score', 'joinedAt', 'ownerUid'])
+          && (!('ownerUid' in request.resource.data) || request.resource.data.ownerUid == sess(pin).ownerUid)
           && (!('avatar' in request.resource.data) || (request.resource.data.avatar is int
               && request.resource.data.avatar >= 0 && request.resource.data.avatar < 12))
           && request.resource.data.name is string
@@ -76,7 +77,8 @@ service cloud.firestore {
           && request.resource.data.joinedAt == request.time
           && sess(pin).mode == 'live' && sess(pin).status != 'ended';
         // Skor hanya dihitung dan ditulis oleh dosen pemilik sesi.
-        allow update, delete: if ownsSession(pin);
+        // (ownerUid disalin ke dokumen peserta agar pembaruan skor massal tidak perlu membaca dokumen sesi berulang kali.)
+        allow update, delete: if (isGoogle() && resource.data.get('ownerUid', '') == request.auth.uid) || ownsSession(pin);
       }
 
       match /answers/{answerId} {
@@ -104,7 +106,8 @@ service cloud.firestore {
         allow read: if ownsSession(pin) || (signedIn() && request.auth.uid == uid);
 
         allow create: if signedIn() && request.auth.uid == uid
-          && request.resource.data.keys().hasOnly(['name', 'nim', 'answers', 'status', 'startedAt', 'updatedAt'])
+          && request.resource.data.keys().hasOnly(['name', 'nim', 'answers', 'status', 'startedAt', 'updatedAt', 'ownerUid'])
+          && (!('ownerUid' in request.resource.data) || request.resource.data.ownerUid == sess(pin).ownerUid)
           && request.resource.data.name is string
           && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 60
           && request.resource.data.nim is string && request.resource.data.nim.size() <= 30
@@ -117,7 +120,7 @@ service cloud.firestore {
 
         // Mahasiswa hanya boleh mengubah jawaban & status miliknya sendiri,
         // selama ujian dibuka dan durasinya belum habis (+1 menit toleransi).
-        allow update: if ownsSession(pin) || (
+        allow update: if (isGoogle() && resource.data.get('ownerUid', '') == request.auth.uid) || ownsSession(pin) || (
           signedIn() && request.auth.uid == uid
           && resource.data.status == 'progress'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answers', 'status', 'updatedAt', 'submittedAt'])
