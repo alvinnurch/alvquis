@@ -523,3 +523,14 @@ tr:last-child td { border-bottom: 0; }
 /* ---------- layar PIN ujian mandiri ---------- */
 .ps-stats { display: flex; gap: clamp(24px, 6vw, 96px); justify-content: center; text-align: center; flex-wrap: wrap; }
 .ps-stats > div > div:last-child { opacity: .8; font-size: clamp(14px, 1.6vw, 20px); margin-top: 6px; }
+
+/* ---------- format teks (tebal / miring) ---------- */
+.fmt-bar { display: inline-flex; gap: 2px; margin-left: 4px; }
+.fmt-btn { min-width: 34px; padding-inline: 8px; font-family: Georgia, "Times New Roman", serif; font-size: 15px; }
+.fmt-preview { display: grid; gap: 4px; padding: 10px 12px; border-radius: var(--radius-md, 10px); background: rgb(127 127 127 / .08); border: 1px dashed rgb(127 127 127 / .3); }
+.fmt-preview[hidden] { display: none; }
+/* Teks soal sedikit lebih ringan supaya bagian **tebal** terlihat jelas bedanya. */
+.qtext, .m-q, .seq-card { font-weight: 500; }
+.m-tile { font-weight: 600; }
+.qtext b, .m-q b, .tile b, .m-tile b, .choice b, .seq-card b, .ord-item b, .mt-row b, .mt-opt b, .fmt-preview b { font-weight: 800; }
+.qtext i, .m-q i { font-style: italic; }

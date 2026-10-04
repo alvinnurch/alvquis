@@ -2,16 +2,16 @@ import {
   configured, auth, db, authReady, GoogleAuthProvider, signInWithPopup, signOut,
   doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
   serverTimestamp, writeBatch, query, where, increment, Timestamp, getCountFromServer,
-} from "./fb.js?v=2026.10.01-r5";
-import * as CFG from "./firebase-config.js?v=2026.10.01-r5";
+} from "./fb.js?v=2026.10.04-r6";
+import * as CFG from "./firebase-config.js?v=2026.10.04-r6";
 const ADMIN_EMAILS = Array.isArray(CFG.ADMIN_EMAILS) ? CFG.ADMIN_EMAILS : [];
-import { esc, shape, toast, LETTERS, OPT_CLASS, pointsFor, fmtDate, setupNotice } from "./ui.js?v=2026.10.01-r5";
-import { SAMPLE_QUIZ, SAMPLE_KIDS } from "./sample-quiz.js?v=2026.10.01-r5";
-import { THEMES, THEME_KEYS, themeOf, arena, avatar, gameState } from "./themes.js?v=2026.10.01-r5";
-import { Sound } from "./sound.js?v=2026.10.01-r5";
-import { VERSION } from "./version.js?v=2026.10.01-r5";
-import { isChoice, isCorrect, publicQ, solutionList, newSalt } from "./qtypes.js?v=2026.10.01-r5";
-import { stageSeq, stageSolution } from "./qwidgets.js?v=2026.10.01-r5";
+import { esc, fmt, plain, shape, toast, LETTERS, OPT_CLASS, pointsFor, fmtDate, setupNotice } from "./ui.js?v=2026.10.04-r6";
+import { SAMPLE_QUIZ, SAMPLE_KIDS } from "./sample-quiz.js?v=2026.10.04-r6";
+import { THEMES, THEME_KEYS, themeOf, arena, avatar, gameState } from "./themes.js?v=2026.10.04-r6";
+import { Sound } from "./sound.js?v=2026.10.04-r6";
+import { VERSION } from "./version.js?v=2026.10.04-r6";
+import { isChoice, isCorrect, publicQ, solutionList, newSalt } from "./qtypes.js?v=2026.10.04-r6";
+import { stageSeq, stageSolution } from "./qwidgets.js?v=2026.10.04-r6";
 // Firestore tidak menerima array di dalam array: pasangan disimpan sebagai {l, r}.
 const normQ = (q) => (q.kind === "cocok" && q.pairs?.length && !Array.isArray(q.pairs[0]) ? { ...q, pairs: q.pairs.map((p) => [p.l, p.r]) } : q);
 
@@ -204,7 +204,7 @@ function renderEditor() {
         <button class="btn" data-add="bs">+ Benar / salah</button>
         <button class="btn" data-add="urut">+ Mengurutkan</button>
         <button class="btn" data-add="cocok">+ Mencocokkan</button>
-        <span class="muted small" style="margin-left:auto">${d.questions.length} soal · beri tanda pada opsi yang benar</span>
+        <span class="muted small" style="margin-left:auto">${d.questions.length} soal · beri tanda pada opsi yang benar · format: <b>**tebal**</b>, <i>*miring*</i></span>
       </div>
     </div>`;
   const $qs = $view.querySelector("#qs");
@@ -232,6 +232,24 @@ function renderEditor() {
     else if (f === "item") q.items[+e.target.dataset.oi] = e.target.value;
     else if (f === "pl") q.pairs[+e.target.dataset.oi][0] = e.target.value;
     else if (f === "pr") q.pairs[+e.target.dataset.oi][1] = e.target.value;
+    const pv = card.querySelector("[data-preview]");
+    if (pv) { pv.hidden = !hasFmt(q); if (!pv.hidden) pv.innerHTML = previewQ(q); }
+  });
+  // Tombol B / I: berlaku untuk kolom yang terakhir disentuh di kartu soal itu (default: teks pertanyaan).
+  let lastField = null;
+  const isField = (el) => el?.matches?.("textarea[data-f], input[type=text][data-f]");
+  $qs.addEventListener("focusin", (e) => { if (isField(e.target)) lastField = e.target; });
+  $qs.addEventListener("mousedown", (e) => { if (e.target.closest("[data-fmt]")) e.preventDefault(); });
+  $qs.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-fmt]"); if (!b) return;
+    const card = b.closest("[data-qi]");
+    const el = lastField && card.contains(lastField) ? lastField : card.querySelector("textarea[data-f=text]");
+    wrapFmt(el, b.dataset.fmt);
+  });
+  $qs.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || !isField(e.target)) return;
+    const k = e.key.toLowerCase();
+    if (k === "b" || k === "i") { e.preventDefault(); wrapFmt(e.target, k === "b" ? "**" : "*"); }
   });
   $qs.addEventListener("change", (e) => {
     const card = e.target.closest("[data-qi]"); if (!card) return;
@@ -277,6 +295,33 @@ function seqEditor(q, qi) {
   </div>`;
 }
 
+// Teks bisa diberi format: **tebal** dan *miring*. Pratinjau muncul bila ada tanda format.
+const fieldsOf = (q) => [q.text, ...(q.options || []), ...(q.items || []), ...(q.pairs || []).flat()];
+const hasFmt = (q) => fieldsOf(q).some((t) => /\*[^\s*]/.test(String(t ?? "")));
+function previewQ(q) {
+  const list = q.kind === "urut" ? q.items.map((t, k) => `${k + 1}. ${fmt(t)}`)
+    : q.kind === "cocok" ? q.pairs.map((p) => `${fmt(p[0])} → ${fmt(p[1])}`)
+    : (q.options || []).map((o, k) => `${LETTERS[k]}. ${fmt(o)}`);
+  return `<span class="eyebrow">Pratinjau</span><div>${fmt(q.text)}</div><div class="small muted">${list.join(" · ")}</div>`;
+}
+// Bungkus/lepas teks terpilih dengan tanda format (m = "**" tebal, "*" miring).
+function wrapFmt(el, m) {
+  let v = el.value, a = el.selectionStart ?? v.length, b = el.selectionEnd ?? v.length;
+  while (a < b && v[a] === " ") a++; while (b > a && v[b - 1] === " ") b--;
+  const k = m.length;
+  let L = 0; while (v[a - 1 - L] === "*") L++;
+  let R = 0; while (v[b + R] === "*") R++;
+  if (a < b && (L === k || L === 3) && (R === k || R === 3)) {
+    el.value = v.slice(0, a - k) + v.slice(a, b) + v.slice(b + k);
+    el.setSelectionRange(a - k, b - k);
+  } else {
+    el.value = v.slice(0, a) + m + v.slice(a, b) + m + v.slice(b);
+    el.setSelectionRange(a + k, b + k);
+  }
+  el.focus();
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 function qCard(q, qi) {
   const seq = q.kind === "urut" || q.kind === "cocok";
   const n = seq ? 0 : q.options.length;
@@ -284,6 +329,10 @@ function qCard(q, qi) {
     <div class="qcard-head">
       <span class="qnum">${qi + 1}</span>
       <span class="pill">${{ bs: "Benar / salah", pg: "Pilihan ganda", urut: "Mengurutkan", cocok: "Mencocokkan" }[q.kind]}</span>
+      <span class="fmt-bar" role="group" aria-label="Format teks soal ${qi + 1}">
+        <button type="button" class="btn ghost sm fmt-btn" data-fmt="**" title="Tebal (Ctrl/⌘+B)" aria-label="Tebal"><b>B</b></button>
+        <button type="button" class="btn ghost sm fmt-btn" data-fmt="*" title="Miring (Ctrl/⌘+I)" aria-label="Miring"><i>I</i></button>
+      </span>
       <span class="spacer"></span>
       <button class="btn ghost sm" data-act="up" aria-label="Naikkan soal ${qi + 1}" ${qi === 0 ? "disabled" : ""}>↑</button>
       <button class="btn ghost sm" data-act="down" aria-label="Turunkan soal ${qi + 1}" ${qi === draft.questions.length - 1 ? "disabled" : ""}>↓</button>
@@ -291,6 +340,7 @@ function qCard(q, qi) {
       <button class="btn ghost sm danger" data-act="rm">Hapus</button>
     </div>
     <textarea id="q${qi}-text" data-f="text" rows="2" placeholder="Tulis pertanyaan…" aria-label="Pertanyaan ${qi + 1}">${esc(q.text)}</textarea>
+    <div class="fmt-preview" data-preview ${hasFmt(q) ? "" : "hidden"}>${previewQ(q)}</div>
     ${seq ? seqEditor(q, qi) : `<div class="opts">
       ${q.options.map((o, oi) => `
         <div class="opt-edit ${OPT_CLASS[oi]}">
@@ -553,7 +603,7 @@ async function renderRekap(pin) {
         ${Q.map((q, qi) => {
           const pct = perQ[qi].answered ? Math.round((perQ[qi].right / perQ[qi].answered) * 100) : 0;
           return `<div class="qstat"><span class="qnum">${qi + 1}</span>
-            <div style="min-width:0"><div class="txt" title="${esc(q.text)}">${esc(q.text)}</div>
+            <div style="min-width:0"><div class="txt" title="${esc(plain(q.text))}">${fmt(q.text)}</div>
               <div class="muted small">${isChoice(q) ? `Kunci: ${LETTERS[q.correct]} · ${q.options.map((o, oi) => `${LETTERS[oi]} ${perQ[qi].counts[oi]}`).join(" · ")}` : `${q.kind === "urut" ? "Mengurutkan" : "Mencocokkan"} · benar ${perQ[qi].right} · salah ${perQ[qi].answered - perQ[qi].right}`}</div>
               <div class="bar"><i style="width:${pct}%"></i></div></div>
             <span class="mono" style="text-align:right">${perQ[qi].answered ? pct + "%" : "—"}</span></div>`;
@@ -756,8 +806,8 @@ function renderStage() {
         <div class="timer" id="timer"><b id="tleft">${q.time}</b></div>
         <div class="answered"><div class="n" id="ans-n">${H.answers.length}</div><div class="l">jawaban</div></div>
       </div>
-      <div class="qtext${q.kind === "urut" || q.kind === "cocok" ? " sm" : ""}">${esc(q.text)}</div>
-      ${isChoice(q) ? `<div class="tiles">${q.options.map((o, i) => `<div class="tile ${OPT_CLASS[i]}">${shape(i)}<span class="t">${esc(o)}</span></div>`).join("")}</div>` : stageSeq(publicQ(q, s.current, H.salt))}
+      <div class="qtext${q.kind === "urut" || q.kind === "cocok" ? " sm" : ""}">${fmt(q.text)}</div>
+      ${isChoice(q) ? `<div class="tiles">${q.options.map((o, i) => `<div class="tile ${OPT_CLASS[i]}">${shape(i)}<span class="t">${fmt(o)}</span></div>`).join("")}</div>` : stageSeq(publicQ(q, s.current, H.salt))}
       ${themed ? `<div id="arena-mini">${arena(th, s, PL(), { mode: "mini", answeredIds: new Set(H.answers.map((a) => a.uid)) })}</div>` : ""}`;
     foot = `<span></span><button class="btn light" id="reveal">Tampilkan jawaban</button>`;
     H.tick = setInterval(() => {
@@ -772,15 +822,15 @@ function renderStage() {
   } else if (s.status === "reveal" && q) {
     const counts = s.counts || [0, 0, 0, 0];
     const maxC = Math.max(1, ...counts);
-    body = !isChoice(q) ? `<div class="qtext sm">${esc(q.text)}</div>
+    body = !isChoice(q) ? `<div class="qtext sm">${fmt(q.text)}</div>
       ${s.counts ? `<div class="seq-score">${counts[0] || 0} dari ${H.players.length} menjawab benar</div>${stageSolution(q.kind, solutionList(q))}${themed ? arena(th, s, PL()) : ""}` : `<p style="text-align:center">Menghitung jawaban…</p>`}`
-    : themed ? `<div class="qtext" style="font-size:clamp(18px,2.4vw,30px)">${esc(q.text)}</div>
-      ${s.counts ? `<div class="answer-banner"><div class="tile ${OPT_CLASS[s.correct]} win">${shape(s.correct)}<span class="t">${esc(q.options[s.correct])}</span><span class="mark">✓</span></div>
+    : themed ? `<div class="qtext" style="font-size:clamp(18px,2.4vw,30px)">${fmt(q.text)}</div>
+      ${s.counts ? `<div class="answer-banner"><div class="tile ${OPT_CLASS[s.correct]} win">${shape(s.correct)}<span class="t">${fmt(q.options[s.correct])}</span><span class="mark">✓</span></div>
         <span class="stat">${counts[s.correct] || 0} dari ${H.players.length} benar</span></div>
       ${arena(th, s, PL())}` : `<p style="text-align:center">Menghitung jawaban…</p>`}`
-    : `<div class="qtext" style="font-size:clamp(20px,3vw,36px)">${esc(q.text)}</div>
+    : `<div class="qtext" style="font-size:clamp(20px,3vw,36px)">${fmt(q.text)}</div>
       ${s.counts ? `<div class="dist">${q.options.map((_, i) => `<div class="col"><div class="c">${counts[i]}</div><div class="b ${OPT_CLASS[i]}" style="height:${(counts[i] / maxC) * 100}%"></div><div class="s ${OPT_CLASS[i]}">${shape(i)}</div></div>`).join("")}</div>` : `<p style="text-align:center">Menghitung jawaban…</p>`}
-      <div class="tiles">${q.options.map((o, i) => `<div class="tile ${OPT_CLASS[i]} ${s.correct === i ? "win" : s.correct == null ? "" : "dim"}">${shape(i)}<span class="t">${esc(o)}</span>${s.correct === i ? `<span class="mark" aria-label="jawaban benar">✓</span>` : ""}</div>`).join("")}</div>`;
+      <div class="tiles">${q.options.map((o, i) => `<div class="tile ${OPT_CLASS[i]} ${s.correct === i ? "win" : s.correct == null ? "" : "dim"}">${shape(i)}<span class="t">${fmt(o)}</span>${s.correct === i ? `<span class="mark" aria-label="jawaban benar">✓</span>` : ""}</div>`).join("")}</div>`;
     foot = `<span class="small" style="opacity:.8">Soal ${s.current + 1} dari ${H.Q.length}</span><div class="row">${s.counts ? "" : `<button class="btn light" id="rescore">Hitung ulang skor</button>`}<button class="btn" id="board" ${s.counts ? "" : "disabled"}>Papan skor</button><button class="btn gold lg" id="next" ${s.counts ? "" : "disabled"}>${s.current + 1 >= H.Q.length ? "Lihat juara" : "Soal berikutnya"}</button></div>`;
   } else if (s.status === "leaderboard") {
     body = `<h2 style="text-align:center;font-size:clamp(28px,4vw,48px)">Papan skor</h2>

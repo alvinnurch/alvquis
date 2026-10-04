@@ -16,6 +16,21 @@ export function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+/**
+ * Format sederhana untuk teks soal & jawaban: **tebal** dan *miring* (boleh digabung: ***tebal miring***).
+ * Teks di-escape dulu, lalu hanya <b> dan <i> yang ditambahkan, jadi tetap aman.
+ */
+export function fmt(s) {
+  return esc(s)
+    .replace(/\*\*\*(?=\S)([^*\n]*?\S)\*\*\*/g, "<b><i>$1</i></b>")
+    .replace(/\*\*(?=\S)([^\n]*?\S)\*\*/g, "<b>$1</b>")
+    .replace(/\*(?=[^\s*])([^*\n]*?[^\s*])\*|\*([^\s*])\*/g, (m, a, b) => `<i>${a ?? b}</i>`);
+}
+/** Teks polos tanpa tanda format (untuk atribut, CSV, dsb.). */
+export function plain(s) {
+  return String(s ?? "").replace(/\*\*(?=\S)([^\n]*?\S)\*\*/g, "$1").replace(/\*(?=[^\s*])([^*\n]*?[^\s*])\*|\*([^\s*])\*/g, (m, a, b) => a ?? b);
+}
+
 let toastTimer;
 export function toast(msg, ms = 2600) {
   let el = document.getElementById("toast");

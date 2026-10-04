@@ -350,3 +350,13 @@ Artinya beberapa kelas per hari masih aman. Pemakaian bisa dipantau di Firebase 
 ## K. Bila HP mahasiswa tertinggal soal
 
 Sejak versi r5, HP memakai koneksi yang lebih tahan terhadap jaringan kampus/operator seluler, dan setiap beberapa detik memeriksa sendiri ke server bila tidak menerima kabar. HP yang tertinggal akan menyusul sendiri dalam ±5–10 detik, termasuk setelah layar HP dimatikan lalu dinyalakan lagi. Bila tetap macet, minta mahasiswa memuat ulang halaman (jawaban dan skornya tidak hilang).
+
+## L. Teks tebal dan miring
+
+Di editor soal, pilih kata lalu tekan tombol **B** (tebal) atau *I* (miring) di kepala kartu soal, atau pakai Ctrl+B / Ctrl+I (⌘+B / ⌘+I di Mac). Bisa juga diketik langsung:
+
+- `**teks**` → **tebal**
+- `*teks*` → *miring*
+- `***teks***` → tebal sekaligus miring
+
+Berlaku untuk pertanyaan, opsi jawaban, butir urutan, dan pasangan. Pratinjau muncul di bawah pertanyaan. Format juga bisa dipakai saat "Tempel dari teks".

@@ -1,12 +1,12 @@
 import {
   configured, auth, db, authReady, signInAnonymously,
   getDocFromServer, doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, deleteField,
-} from "./fb.js?v=2026.10.01-r5";
-import { esc, shape, toast, LETTERS, OPT_CLASS, shuffledIdx, fmtDate, mmss, setupNotice } from "./ui.js?v=2026.10.01-r5";
-import { THEMES, themeOf, avatar, avatarPicker, meWidget, themedFeedback } from "./themes.js?v=2026.10.01-r5";
-import { isChoice } from "./qtypes.js?v=2026.10.01-r5";
-import { VERSION } from "./version.js?v=2026.10.01-r5";
-import { mountSeq, solutionInline } from "./qwidgets.js?v=2026.10.01-r5";
+} from "./fb.js?v=2026.10.04-r6";
+import { esc, fmt, shape, toast, LETTERS, OPT_CLASS, shuffledIdx, fmtDate, mmss, setupNotice } from "./ui.js?v=2026.10.04-r6";
+import { THEMES, themeOf, avatar, avatarPicker, meWidget, themedFeedback } from "./themes.js?v=2026.10.04-r6";
+import { isChoice } from "./qtypes.js?v=2026.10.04-r6";
+import { VERSION } from "./version.js?v=2026.10.04-r6";
+import { mountSeq, solutionInline } from "./qwidgets.js?v=2026.10.04-r6";
 
 window.__alvOK = true;
 const $view = document.getElementById("view");
@@ -209,7 +209,7 @@ function renderLive() {
       return setView(`<div class="big-icon wait">${Number.isInteger(myAns[i]) ? shape(myAns[i]) : "✓"}</div><h2>Jawaban terkirim</h2><p class="muted">Menunggu teman lain dan waktu habis…</p>${themed ? meWidget(th, S, P) : ""}`, true);
     }
     const bar = `<div class="m-bar"><span>Soal ${i + 1} dari ${S.total}${q.points === 2000 ? " · poin ganda" : ""}</span><span class="clock" id="clk">${q.time}</span></div>
-      <p class="m-q">${esc(q.text)}</p>`;
+      <p class="m-q">${fmt(q.text)}</p>`;
     if (!isChoice(q)) {
       setView(`${bar}<div id="seq" class="stack tight"></div><button class="btn primary lg block seq-submit" id="send" disabled>Kirim jawaban</button>`);
       const clk = $view.querySelector("#clk"), send = $view.querySelector("#send");
@@ -232,7 +232,7 @@ function renderLive() {
     }
     const n = q.options.length;
     setView(`${bar}
-      <div class="m-tiles">${q.options.map((o, k) => `<button class="m-tile ${OPT_CLASS[k]}" data-k="${k}" style="${n === 3 && k === 2 ? "grid-column:span 2" : ""}">${shape(k)}<span>${esc(o)}</span></button>`).join("")}</div>`);
+      <div class="m-tiles">${q.options.map((o, k) => `<button class="m-tile ${OPT_CLASS[k]}" data-k="${k}" style="${n === 3 && k === 2 ? "grid-column:span 2" : ""}">${shape(k)}<span>${fmt(o)}</span></button>`).join("")}</div>`);
     const clk = $view.querySelector("#clk"), end = questionEnd(q);
     tick = setInterval(() => {
       const left = (end - Date.now()) / 1000;
@@ -307,7 +307,7 @@ function answerFailed(e) {
 }
 function rightText() {
   const q = S.question;
-  return isChoice(q) ? `<b>${LETTERS[S.correct]}. ${esc(q?.options?.[S.correct])}</b>` : `<b>${esc(solutionInline(q.kind, S.solution))}</b>`;
+  return isChoice(q) ? `<b>${LETTERS[S.correct]}. ${fmt(q?.options?.[S.correct])}</b>` : `<b>${fmt(solutionInline(q.kind, S.solution))}</b>`;
 }
 function rankLine() { return P.rank ? `<p class="muted">Peringkat ${P.rank} · ${(P.score || 0).toLocaleString("id-ID")} poin</p>` : ""; }
 function bindOut() { $view.querySelector("#out")?.addEventListener("click", () => { stopAll(); renderJoin(""); }); }
@@ -389,9 +389,9 @@ function renderMandiri() {
   const doneCount = order.filter((_, k) => answered(k)).length;
   setView(`
     <div class="m-bar"><span>Soal ${cur + 1} dari ${n} · ${doneCount} terjawab</span><span class="clock" id="clk">${mmss((endAt - Date.now()) / 1000)}</span></div>
-    <p class="m-q">${esc(q.text)}</p>
+    <p class="m-q">${fmt(q.text)}</p>
     ${isChoice(q) ? `<div class="stack tight" role="group" aria-label="Pilihan jawaban">
-      ${optOrder(qi).map((oi, pos) => `<button class="choice" data-oi="${oi}" aria-pressed="${picked === oi}"><span class="badge ${OPT_CLASS[pos]}">${shape(pos)}</span><span>${esc(q.options[oi])}</span></button>`).join("")}
+      ${optOrder(qi).map((oi, pos) => `<button class="choice" data-oi="${oi}" aria-pressed="${picked === oi}"><span class="badge ${OPT_CLASS[pos]}">${shape(pos)}</span><span>${fmt(q.options[oi])}</span></button>`).join("")}
     </div>` : `<div id="seq" class="stack tight"></div>`}
     <div class="row between">
       <button class="btn" id="prev" ${cur === 0 ? "disabled" : ""}>← Sebelumnya</button>

@@ -6,7 +6,7 @@ import {
   getFirestore, initializeFirestore, getDocFromServer, doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
   serverTimestamp, writeBatch, query, where, orderBy, increment, Timestamp, deleteField, getCountFromServer, connectFirestoreEmulator,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { firebaseConfig, USE_EMULATOR } from "./firebase-config.js?v=2026.10.01-r5";
+import { firebaseConfig, USE_EMULATOR } from "./firebase-config.js?v=2026.10.04-r6";
 
 export const configured = !String(firebaseConfig.apiKey || "").startsWith("GANTI");
 
