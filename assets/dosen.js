@@ -2,16 +2,15 @@ import {
   configured, auth, db, authReady, GoogleAuthProvider, signInWithPopup, signOut,
   doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
   serverTimestamp, writeBatch, query, where, increment, Timestamp, getCountFromServer,
-} from "./fb.js?v=2026.10.04-r7";
-import * as CFG from "./firebase-config.js?v=2026.10.04-r7";
+} from "./fb.js?v=2026.10.04-r8";
+import * as CFG from "./firebase-config.js?v=2026.10.04-r8";
 const ADMIN_EMAILS = Array.isArray(CFG.ADMIN_EMAILS) ? CFG.ADMIN_EMAILS : [];
-import { esc, fmt, plain, shape, toast, LETTERS, OPT_CLASS, pointsFor, fmtDate, setupNotice } from "./ui.js?v=2026.10.04-r7";
-import { SAMPLE_QUIZ, SAMPLE_KIDS } from "./sample-quiz.js?v=2026.10.04-r7";
-import { THEMES, THEME_KEYS, themeOf, arena, avatar, gameState } from "./themes.js?v=2026.10.04-r7";
-import { Sound } from "./sound.js?v=2026.10.04-r7";
-import { VERSION } from "./version.js?v=2026.10.04-r7";
-import { isChoice, isCorrect, publicQ, solutionList, newSalt } from "./qtypes.js?v=2026.10.04-r7";
-import { stageSeq, stageSolution } from "./qwidgets.js?v=2026.10.04-r7";
+import { esc, fmt, plain, shape, toast, LETTERS, OPT_CLASS, pointsFor, fmtDate, setupNotice } from "./ui.js?v=2026.10.04-r8";
+import { THEMES, THEME_KEYS, themeOf, arena, avatar, gameState } from "./themes.js?v=2026.10.04-r8";
+import { Sound } from "./sound.js?v=2026.10.04-r8";
+import { VERSION } from "./version.js?v=2026.10.04-r8";
+import { isChoice, isCorrect, publicQ, solutionList, newSalt } from "./qtypes.js?v=2026.10.04-r8";
+import { stageSeq, stageSolution } from "./qwidgets.js?v=2026.10.04-r8";
 // Firestore tidak menerima array di dalam array: pasangan disimpan sebagai {l, r}.
 const normQ = (q) => (q.kind === "cocok" && q.pairs?.length && !Array.isArray(q.pairs[0]) ? { ...q, pairs: q.pairs.map((p) => [p.l, p.r]) } : q);
 
@@ -180,8 +179,6 @@ function renderQuizList() {
     <div class="page-head">
       <div class="stack tight"><span class="eyebrow">Bank soal</span><h1>Kuis &amp; ujian Anda</h1></div>
       <div class="row">
-        <button class="btn" id="sample">Contoh: Hadis &amp; Teknologi</button>
-        <button class="btn" id="sample2">Contoh: Kuis Anak</button>
         <button class="btn primary" id="new">+ Kuis baru</button>
       </div>
     </div>
@@ -199,12 +196,10 @@ function renderQuizList() {
         </div>`).join("") : `
         <div class="empty">
           <h3>Belum ada kuis</h3>
-          <p>Buat kuis baru, tempel soal dari Word, atau muat contoh soal Hadis dan Teknologi untuk mencoba alurnya.</p>
+          <p>Tekan <b>+ Kuis baru</b> untuk mulai menulis soal, atau tempel soal dari Word lewat tombol <b>Tempel dari teks</b> di editor.</p>
         </div>`}
     </div>`;
   $view.querySelector("#new").onclick = () => openEditor({ id: newId(), title: "", course: "", questions: [blankQ()] }, true);
-  $view.querySelector("#sample").onclick = () => openEditor({ id: newId(), ...structuredClone(SAMPLE_QUIZ) }, true);
-  $view.querySelector("#sample2").onclick = () => openEditor({ id: newId(), ...structuredClone(SAMPLE_KIDS) }, true);
   $view.querySelectorAll("[data-edit]").forEach((b) => b.onclick = () => openEditor(structuredClone(quizzes.find((q) => q.id === b.dataset.edit)), false));
   $view.querySelectorAll("[data-start]").forEach((b) => b.onclick = () => startDialog(quizzes.find((q) => q.id === b.dataset.start)));
 }

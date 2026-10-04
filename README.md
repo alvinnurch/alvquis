@@ -186,8 +186,8 @@ Tanpa langkah ini, tombol **Masuk dengan Google** akan gagal (`auth/unauthorized
 Siapkan laptop dan satu HP.
 
 1. **Laptop**: buka `https://NAMA-AKUN.github.io/alvquis/dosen.html` → **Lanjut dengan Google** → pilih akun Anda. (Jika pop-up diblokir, izinkan pop-up untuk situs ini.) Pada kunjungan pertama, isi **nama lengkap** dan **kampus/lembaga**, centang persetujuan, lalu klik **Daftar & mulai**. Kunjungan berikutnya langsung masuk.
-2. Klik **Contoh: Hadis & Teknologi** (atau **Contoh: Kuis Anak**) → **Simpan** → **← Bank soal**.
-3. Pada kuis contoh, klik **Mulai sesi** → pilih **Live di kelas** → **Buat sesi & PIN**. Panggung hijau dengan PIN dan kode QR muncul.
+2. Klik **+ Kuis baru**, tulis beberapa soal uji coba → **Simpan** → **← Bank soal**.
+3. Pada kuis itu, klik **Mulai sesi** → pilih **Live di kelas** → **Buat sesi & PIN**. Panggung hijau dengan PIN dan kode QR muncul.
 4. **HP**: pindai kode QR, atau buka `https://NAMA-AKUN.github.io/alvquis/` dan ketik PIN. Isi nama dan NIM → **Gabung kuis**. Nama Anda muncul di layar laptop.
 5. **Laptop**: klik **Mulai kuis**. **HP**: pilih jawaban. Setelah waktu habis, laptop menampilkan grafik jawaban dan HP menampilkan *Benar!* atau *Kurang tepat*.
 6. Lanjutkan sampai selesai, lalu klik **Lihat rekap nilai**.
@@ -300,7 +300,6 @@ Saat **Mulai sesi → Live di kelas**, pilih tema. Tema hanya mengubah tampilan;
 
 - Mahasiswa/anak **memilih avatar** (12 hewan lucu) saat bergabung. Avatar tampil di layar proyektor dan di HP.
 - Pemain yang sudah dimakan robot atau kehabisan balon **tetap bisa menjawab**, dan nilainya tetap dihitung.
-- Ada contoh soal kedua, **Contoh: Kuis Anak** (10 soal pengenalan Islam untuk TPA/SD), yang cocok untuk tema-tema ini.
 
 ---
 
@@ -336,7 +335,6 @@ Artinya beberapa kelas per hari masih aman. Pemakaian bisa dipantau di Firebase 
 | `dosen.html` | Halaman dosen: bank soal, panggung proyektor, rekap nilai |
 | `assets/firebase-config.js` | **Satu-satunya file yang perlu diubah** (langkah C) |
 | `firestore.rules` | Aturan keamanan yang ditempel di Firebase (langkah A5) |
-| `assets/sample-quiz.js` | Contoh 10 soal Hadis dan Teknologi |
 | `assets/*.js`, `assets/style.css` | Kode aplikasi dan tampilan (tidak perlu diubah) |
 
 ## J. Memakai domain sendiri (mis. kuis.islamiinstitute.my.id)

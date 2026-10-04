@@ -1,12 +1,12 @@
 import {
   configured, auth, db, authReady, signInAnonymously,
   getDocFromServer, doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, deleteField,
-} from "./fb.js?v=2026.10.04-r7";
-import { esc, fmt, shape, toast, LETTERS, OPT_CLASS, shuffledIdx, fmtDate, mmss, setupNotice } from "./ui.js?v=2026.10.04-r7";
-import { THEMES, themeOf, avatar, avatarPicker, meWidget, themedFeedback } from "./themes.js?v=2026.10.04-r7";
-import { isChoice } from "./qtypes.js?v=2026.10.04-r7";
-import { VERSION } from "./version.js?v=2026.10.04-r7";
-import { mountSeq, solutionInline } from "./qwidgets.js?v=2026.10.04-r7";
+} from "./fb.js?v=2026.10.04-r8";
+import { esc, fmt, shape, toast, LETTERS, OPT_CLASS, shuffledIdx, fmtDate, mmss, setupNotice } from "./ui.js?v=2026.10.04-r8";
+import { THEMES, themeOf, avatar, avatarPicker, meWidget, themedFeedback } from "./themes.js?v=2026.10.04-r8";
+import { isChoice } from "./qtypes.js?v=2026.10.04-r8";
+import { VERSION } from "./version.js?v=2026.10.04-r8";
+import { mountSeq, solutionInline } from "./qwidgets.js?v=2026.10.04-r8";
 
 window.__alvOK = true;
 const $view = document.getElementById("view");
