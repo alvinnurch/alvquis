@@ -360,3 +360,16 @@ Di editor soal, pilih kata lalu tekan tombol **B** (tebal) atau *I* (miring) di 
 - `***teks***` → tebal sekaligus miring
 
 Berlaku untuk pertanyaan, opsi jawaban, butir urutan, dan pasangan. Pratinjau muncul di bawah pertanyaan. Format juga bisa dipakai saat "Tempel dari teks".
+
+## M. Persetujuan dosen baru
+
+Sejak versi r7, siapa pun tetap bisa **mendaftar** dengan akun Google, tetapi baru bisa membuat kuis dan sesi setelah **disetujui super admin**.
+
+1. Dosen baru masuk lewat `dosen.html` dan mengisi profil. Ia melihat layar **Menunggu persetujuan**, yang terbuka sendiri begitu disetujui.
+2. Super admin melihat angka merah di tab **Super admin** dan pemberitahuan saat masuk. Di daftar Dosen, pendaftar baru ada di paling atas dengan tombol **Setujui** / **Tolak**, plus **Setujui semua** bila lebih dari satu.
+3. **Tolak** membuat akun itu tidak bisa dipakai; kapan pun bisa diubah lagi lewat tombol **Setujui**. Dosen aktif tetap bisa **Blokir** / **Aktifkan** seperti biasa.
+4. Akun di `ADMIN_EMAILS` (dan di `isAdmin()` pada rules) otomatis aktif tanpa persetujuan.
+
+**Wajib setelah memperbarui:** salin isi `firestore.rules` yang baru ke Firebase Console → Firestore → Rules → **Publish**. Persetujuan ini dijaga di server oleh rules, bukan hanya di tampilan.
+
+**Dosen yang sudah terdaftar sebelumnya** akan berstatus *Menunggu*. Buka tab Super admin lalu tekan **Setujui semua** supaya mereka bisa langsung bekerja lagi. Sesi yang sedang berjalan tidak terganggu.

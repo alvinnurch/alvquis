@@ -2,16 +2,16 @@ import {
   configured, auth, db, authReady, GoogleAuthProvider, signInWithPopup, signOut,
   doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
   serverTimestamp, writeBatch, query, where, increment, Timestamp, getCountFromServer,
-} from "./fb.js?v=2026.10.04-r6";
-import * as CFG from "./firebase-config.js?v=2026.10.04-r6";
+} from "./fb.js?v=2026.10.04-r7";
+import * as CFG from "./firebase-config.js?v=2026.10.04-r7";
 const ADMIN_EMAILS = Array.isArray(CFG.ADMIN_EMAILS) ? CFG.ADMIN_EMAILS : [];
-import { esc, fmt, plain, shape, toast, LETTERS, OPT_CLASS, pointsFor, fmtDate, setupNotice } from "./ui.js?v=2026.10.04-r6";
-import { SAMPLE_QUIZ, SAMPLE_KIDS } from "./sample-quiz.js?v=2026.10.04-r6";
-import { THEMES, THEME_KEYS, themeOf, arena, avatar, gameState } from "./themes.js?v=2026.10.04-r6";
-import { Sound } from "./sound.js?v=2026.10.04-r6";
-import { VERSION } from "./version.js?v=2026.10.04-r6";
-import { isChoice, isCorrect, publicQ, solutionList, newSalt } from "./qtypes.js?v=2026.10.04-r6";
-import { stageSeq, stageSolution } from "./qwidgets.js?v=2026.10.04-r6";
+import { esc, fmt, plain, shape, toast, LETTERS, OPT_CLASS, pointsFor, fmtDate, setupNotice } from "./ui.js?v=2026.10.04-r7";
+import { SAMPLE_QUIZ, SAMPLE_KIDS } from "./sample-quiz.js?v=2026.10.04-r7";
+import { THEMES, THEME_KEYS, themeOf, arena, avatar, gameState } from "./themes.js?v=2026.10.04-r7";
+import { Sound } from "./sound.js?v=2026.10.04-r7";
+import { VERSION } from "./version.js?v=2026.10.04-r7";
+import { isChoice, isCorrect, publicQ, solutionList, newSalt } from "./qtypes.js?v=2026.10.04-r7";
+import { stageSeq, stageSolution } from "./qwidgets.js?v=2026.10.04-r7";
 // Firestore tidak menerima array di dalam array: pasangan disimpan sebagai {l, r}.
 const normQ = (q) => (q.kind === "cocok" && q.pairs?.length && !Array.isArray(q.pairs[0]) ? { ...q, pairs: q.pairs.map((p) => [p.l, p.r]) } : q);
 
@@ -81,7 +81,7 @@ function renderRegister(u) {
     e.preventDefault();
     const prof = { name: $view.querySelector("#r-name").value.trim(), institution: $view.querySelector("#r-inst").value.trim(), email: u.email || "", createdAt: serverTimestamp() };
     if (!prof.name || !prof.institution) return toast("Isi nama dan lembaga.");
-    try { await setDoc(doc(db, "dosen", u.uid), prof); toast("Pendaftaran berhasil"); enter(u, prof); }
+    try { await setDoc(doc(db, "dosen", u.uid), prof); toast("Pendaftaran terkirim"); enter(u, prof); }
     catch (er) { toast("Gagal mendaftar: " + (er.code || er.message)); }
   };
 }
@@ -92,12 +92,26 @@ function enter(u, prof) {
   const nm = document.getElementById("who-dosen"); if (nm) nm.textContent = prof?.name || u.email || "";
   if (prof?.blocked) {
     $tabs.hidden = true;
-    $view.innerHTML = `<div class="notice" style="max-width:520px;margin:48px auto">Akun <b>${esc(u.email || "")}</b> sedang dinonaktifkan oleh super admin. Hubungi pengelola AlvQuis bila ini keliru.</div>`;
+    $view.innerHTML = `<div class="notice" style="max-width:520px;margin:48px auto">${prof.approved
+      ? `Akun <b>${esc(u.email || "")}</b> sedang dinonaktifkan oleh super admin.`
+      : `Pendaftaran akun <b>${esc(u.email || "")}</b> belum disetujui super admin.`} Hubungi pengelola AlvQuis bila ini keliru.
+      <div style="margin-top:12px"><button class="btn sm" id="p-out">Keluar</button></div></div>`;
+    $view.querySelector("#p-out").onclick = async () => { await signOut(auth); location.reload(); };
     return;
   }
+  // Dosen baru harus disetujui super admin dulu.
+  if (!isAdminUser() && prof?.approved !== true) return renderPending(u, prof);
   if (isAdminUser() && !$tabs.querySelector('[data-tab="admin"]')) {
     const b = document.createElement("button"); b.className = "tab"; b.dataset.tab = "admin"; b.setAttribute("aria-selected", "false"); b.textContent = "Super admin";
     $tabs.insertBefore(b, document.getElementById("logout"));
+    // Pemberitahuan pendaftar baru yang menunggu persetujuan.
+    unsubs.push(onSnapshot(collection(db, "dosen"), (snap) => {
+      const n = snap.docs.filter((d) => isPending({ uid: d.id, ...d.data() })).length;
+      b.innerHTML = `Super admin${n ? ` <span class="badge-n" aria-label="${n} menunggu persetujuan">${n}</span>` : ""}`;
+      if (n > (A.lastPending ?? 0)) toast(`${n} dosen menunggu persetujuan. Buka tab Super admin.`, 5000);
+      A.lastPending = n;
+      if (tab === "admin" && A.data) { A.data = null; renderAdmin(); }
+    }, () => {}));
   }
   unsubs.push(onSnapshot(query(collection(db, "quizzes"), where("ownerUid", "==", me.uid)), (s) => {
     quizzes = s.docs.map((d) => { const x = d.data(); return { id: d.id, ...x, questions: (x.questions || []).map(normQ) }; }).sort((a, b) => (b.updatedAt?.toMillis?.() || 0) - (a.updatedAt?.toMillis?.() || 0));
@@ -108,6 +122,30 @@ function enter(u, prof) {
     if (tab === "sesi" && !rekapPin) render();
   }, (e) => toast("Gagal memuat sesi: " + e.code)));
   render();
+}
+
+let pendingUnsub = null;
+function renderPending(u, prof) {
+  $tabs.hidden = true;
+  $view.innerHTML = `
+    <div class="stack" style="max-width:520px;margin:48px auto;text-align:center">
+      <div class="big-icon wait" style="margin:0 auto">⏳</div>
+      <h1>Menunggu persetujuan</h1>
+      <p class="muted">Pendaftaran Anda sudah diterima. Super admin AlvQuis perlu menyetujuinya dulu sebelum Anda bisa membuat kuis dan sesi. Halaman ini akan terbuka sendiri begitu disetujui.</p>
+      <div class="card stack tight" style="text-align:left">
+        <div class="row between"><span class="muted">Nama</span><b>${esc(prof?.name || "")}</b></div>
+        <div class="row between"><span class="muted">Lembaga</span><b>${esc(prof?.institution || "")}</b></div>
+        <div class="row between"><span class="muted">Email</span><b class="mono small">${esc(u.email || "")}</b></div>
+      </div>
+      <div class="row" style="justify-content:center"><button class="btn" id="p-check">Periksa lagi</button><button class="btn ghost" id="p-out">Keluar</button></div>
+    </div>`;
+  $view.querySelector("#p-check").onclick = () => checkProfile(u);
+  $view.querySelector("#p-out").onclick = async () => { pendingUnsub?.(); await signOut(auth); location.reload(); };
+  pendingUnsub?.();
+  pendingUnsub = onSnapshot(doc(db, "dosen", u.uid), (snap) => {
+    const p = snap.data();
+    if (p && (p.approved === true || p.blocked)) { pendingUnsub?.(); pendingUnsub = null; if (p.approved && !p.blocked) toast("Akun Anda sudah disetujui. Selamat datang!", 4000); enter(u, p); }
+  }, () => {});
 }
 
 $tabs.addEventListener("click", async (e) => {
@@ -129,7 +167,7 @@ const isAdminUser = () => !!me?.email && ADMIN_EMAILS.map((e) => e.toLowerCase()
 /* ---------------------------------------------------------------- in-page dialogs */
 function ask(message, okLabel = "Ya", danger = false) {
   return new Promise((resolve) => {
-    $dlg.innerHTML = `<form method="dialog" class="dlg"><p>${esc(message)}</p>
+    $dlg.innerHTML = `<form method="dialog" class="dlg"><p style="white-space:pre-line">${esc(message)}</p>
       <div class="dlg-foot"><button class="btn" value="no">Batal</button><button class="btn ${danger ? "danger" : "primary"}" value="ok">${esc(okLabel)}</button></div></form>`;
     $dlg.onclose = () => resolve($dlg.returnValue === "ok");
     $dlg.showModal();
@@ -972,6 +1010,23 @@ async function sessionCount(s) {
   catch { A.counts[s.id] = "?"; }
   return A.counts[s.id];
 }
+const isAdminEmail = (email) => !!email && ADMIN_EMAILS.map((e) => e.toLowerCase()).includes(String(email).toLowerCase());
+const isPending = (d) => !d.noProfile && !d.blocked && d.approved !== true && !isAdminEmail(d.email);
+function dosenStatus(d) {
+  if (d.noProfile) return `<span class="pill">Tanpa profil</span>`;
+  if (d.blocked) return d.approved ? `<span class="pill live">Diblokir</span>` : `<span class="pill live">Ditolak</span>`;
+  if (isAdminEmail(d.email)) return `<span class="pill gold">Super admin</span>`;
+  if (d.approved !== true) return `<span class="pill wait">Menunggu</span>`;
+  return `<span class="pill open">Aktif</span>`;
+}
+async function approveDosen(list) {
+  for (let i = 0; i < list.length; i += 400) {
+    const b = writeBatch(db);
+    list.slice(i, i + 400).forEach((d) => b.update(doc(db, "dosen", d.uid), { approved: true, approvedAt: serverTimestamp(), approvedBy: me.email || "", blocked: false }));
+    await b.commit();
+  }
+  list.forEach((d) => { d.approved = true; d.blocked = false; });
+}
 const ownerName = (uid, fallback) => { const d = A.data.byUid[uid]; return d ? (d.name || d.email || "—") : fallback || "—"; };
 
 async function renderAdmin(reload) {
@@ -991,15 +1046,18 @@ async function renderAdmin(reload) {
   const seg = (k, label, n) => `<button class="tab" data-av="${k}" aria-selected="${A.view === k}">${label} <span class="muted">(${n})</span></button>`;
   let table = "";
   if (A.view === "dosen") {
-    const list = D.dosen.slice().sort((a, b) => lastAct(b.uid) - lastAct(a.uid));
-    table = `<div class="tablewrap"><table class="admin-table"><thead><tr><th>Dosen</th><th>Lembaga</th><th>Email</th><th>Terdaftar</th><th class="num">Kuis</th><th class="num">Sesi</th><th>Aktivitas terakhir</th><th>Status</th><th></th></tr></thead><tbody>
+    const list = D.dosen.slice().sort((a, b) => (isPending(b) - isPending(a)) || (lastAct(b.uid) - lastAct(a.uid)) || ((b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0)));
+    const pend = list.filter(isPending);
+    table = `${pend.length ? `<div class="notice row between" style="gap:12px"><span><b>${pend.length} dosen</b> menunggu persetujuan. Mereka belum bisa membuat kuis atau sesi.</span>${pend.length > 1 ? `<button class="btn sm primary" id="a-approve-all">Setujui semua (${pend.length})</button>` : ""}</div>` : ""}
+    <div class="tablewrap"><table class="admin-table"><thead><tr><th>Dosen</th><th>Lembaga</th><th>Email</th><th>Terdaftar</th><th class="num">Kuis</th><th class="num">Sesi</th><th>Aktivitas terakhir</th><th>Status</th><th></th></tr></thead><tbody>
       ${list.map((d) => `<tr>
         <td><b>${esc(d.name || "(tanpa profil)")}</b></td><td>${esc(d.institution || "—")}</td><td class="mono small">${esc(d.email || "—")}</td>
         <td>${fmtDate(d.createdAt)}</td><td class="num mono">${nQ(d.uid)}</td><td class="num mono">${nS(d.uid)}</td><td>${lastAct(d.uid) ? fmtDate(new Date(lastAct(d.uid))) : "—"}</td>
-        <td>${d.blocked ? `<span class="pill live">Diblokir</span>` : d.noProfile ? `<span class="pill">Tanpa profil</span>` : `<span class="pill open">Aktif</span>`}</td>
+        <td>${dosenStatus(d)}</td>
         <td class="row" style="flex-wrap:nowrap">
-          <button class="btn sm" data-see="${esc(d.uid)}">Lihat</button>
-          ${d.noProfile || d.uid === me.uid ? "" : `<button class="btn sm ${d.blocked ? "" : "danger"}" data-block="${esc(d.uid)}" data-on="${d.blocked ? 0 : 1}">${d.blocked ? "Aktifkan" : "Blokir"}</button>`}
+          ${isPending(d) ? `<button class="btn sm primary" data-approve="${esc(d.uid)}">Setujui</button><button class="btn sm danger" data-block="${esc(d.uid)}" data-on="1" data-reject="1">Tolak</button>`
+          : `<button class="btn sm" data-see="${esc(d.uid)}">Lihat</button>
+          ${d.noProfile || d.uid === me.uid || isAdminEmail(d.email) ? "" : `<button class="btn sm ${d.blocked ? "" : "danger"}" data-block="${esc(d.uid)}" data-on="${d.blocked ? 0 : 1}">${d.blocked ? (d.approved ? "Aktifkan" : "Setujui") : "Blokir"}</button>`}`}
         </td></tr>`).join("") || `<tr><td colspan="9" class="muted">Belum ada dosen terdaftar.</td></tr>`}
       </tbody></table></div>`;
   } else if (A.view === "sesi") {
@@ -1026,7 +1084,7 @@ async function renderAdmin(reload) {
     </div>
     <div class="stack">
       <div class="stats">
-        <div class="card stat"><div class="v">${D.dosen.filter((d) => !d.noProfile).length}</div><div class="k">Dosen terdaftar</div></div>
+        <div class="card stat"><div class="v">${D.dosen.filter((d) => !d.noProfile).length}</div><div class="k">Dosen terdaftar${D.dosen.some(isPending) ? ` · <b>${D.dosen.filter(isPending).length} menunggu</b>` : ""}</div></div>
         <div class="card stat"><div class="v">${D.quizzes.length}</div><div class="k">Kuis di bank soal</div></div>
         <div class="card stat"><div class="v">${D.sessions.length}</div><div class="k">Sesi dibuat</div></div>
         <div class="card stat"><div class="v" id="a-peserta">${totalPeserta || "…"}</div><div class="k">Peserta tercatat</div></div>
@@ -1041,11 +1099,30 @@ async function renderAdmin(reload) {
   $view.querySelector("#a-clear")?.addEventListener("click", () => { A.filter = null; renderAdmin(); });
   $view.querySelectorAll("[data-av]").forEach((b) => b.onclick = () => { A.view = b.dataset.av; renderAdmin(); });
   $view.querySelectorAll("[data-see]").forEach((b) => b.onclick = () => { A.filter = b.dataset.see; A.view = "sesi"; renderAdmin(); });
+  $view.querySelectorAll("[data-approve]").forEach((b) => b.onclick = async () => {
+    const d = D.byUid[b.dataset.approve]; b.disabled = true;
+    try { await approveDosen([d]); toast(`${d.name || d.email} disetujui`); renderAdmin(); }
+    catch (e) { b.disabled = false; toast("Gagal: " + (e.code || e.message)); }
+  });
+  $view.querySelector("#a-approve-all")?.addEventListener("click", async (e) => {
+    const list = D.dosen.filter(isPending);
+    if (!(await ask(`Setujui ${list.length} dosen sekaligus?\n${list.map((d) => `• ${d.name} (${d.email})`).join("\n")}`, "Setujui semua"))) return;
+    e.target.disabled = true;
+    try { await approveDosen(list); toast(`${list.length} dosen disetujui`); renderAdmin(); }
+    catch (er) { e.target.disabled = false; toast("Gagal: " + (er.code || er.message)); }
+  });
   $view.querySelectorAll("[data-block]").forEach((b) => b.onclick = async () => {
-    const on = b.dataset.on === "1", d = D.byUid[b.dataset.block];
-    if (!(await ask(on ? `Blokir ${d.name || d.email}? Ia tidak bisa lagi membuat kuis atau sesi baru. Data lamanya tetap tersimpan.` : `Aktifkan kembali ${d.name || d.email}?`, on ? "Blokir" : "Aktifkan", on))) return;
-    try { await updateDoc(doc(db, "dosen", d.uid), { blocked: on, blockedAt: serverTimestamp() }); d.blocked = on; toast(on ? "Dosen diblokir" : "Dosen diaktifkan"); renderAdmin(); }
-    catch (e) { toast("Gagal: " + (e.code || e.message)); }
+    const on = b.dataset.on === "1", d = D.byUid[b.dataset.block], reject = b.dataset.reject === "1";
+    const msg = reject ? `Tolak pendaftaran ${d.name || d.email}? Ia tidak bisa memakai AlvQuis. Anda bisa menyetujuinya nanti dari daftar ini.`
+      : on ? `Blokir ${d.name || d.email}? Ia tidak bisa lagi membuat kuis atau sesi baru. Data lamanya tetap tersimpan.`
+      : `${d.approved ? "Aktifkan kembali" : "Setujui"} ${d.name || d.email}?`;
+    if (!(await ask(msg, reject ? "Tolak" : on ? "Blokir" : d.approved ? "Aktifkan" : "Setujui", on))) return;
+    try {
+      // Mengaktifkan kembali = sekaligus menyetujui.
+      await updateDoc(doc(db, "dosen", d.uid), on ? { blocked: true, blockedAt: serverTimestamp() } : { blocked: false, blockedAt: serverTimestamp(), approved: true, approvedAt: serverTimestamp(), approvedBy: me.email || "" });
+      d.blocked = on; if (!on) d.approved = true;
+      toast(reject ? "Pendaftaran ditolak" : on ? "Dosen diblokir" : "Dosen diaktifkan"); renderAdmin();
+    } catch (e) { toast("Gagal: " + (e.code || e.message)); }
   });
   $view.querySelectorAll("[data-delquiz]").forEach((b) => b.onclick = async () => {
     const q = D.quizzes.find((x) => x.id === b.dataset.delquiz);

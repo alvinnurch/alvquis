@@ -1,2 +1,2 @@
 // Diperbarui otomatis setiap rilis.
-export const VERSION = "2026.10.04-r6";
+export const VERSION = "2026.10.04-r7";

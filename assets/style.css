@@ -534,3 +534,7 @@ tr:last-child td { border-bottom: 0; }
 .m-tile { font-weight: 600; }
 .qtext b, .m-q b, .tile b, .m-tile b, .choice b, .seq-card b, .ord-item b, .mt-row b, .mt-opt b, .fmt-preview b { font-weight: 800; }
 .qtext i, .m-q i { font-style: italic; }
+
+/* ---------- persetujuan dosen ---------- */
+.badge-n { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; margin-left: 4px; border-radius: 999px; background: var(--salah, #c0392b); color: #fff; font-size: 12px; font-weight: 700; line-height: 1; }
+.pill.wait { background: color-mix(in srgb, var(--emas, #e0a800) 22%, transparent); color: var(--ink); }
