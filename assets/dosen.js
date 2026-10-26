@@ -2,15 +2,15 @@ import {
   configured, auth, db, authReady, GoogleAuthProvider, signInWithPopup, signOut,
   doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot,
   serverTimestamp, writeBatch, query, where, increment, Timestamp, getCountFromServer,
-} from "./fb.js?v=2026.10.04-r8";
-import * as CFG from "./firebase-config.js?v=2026.10.04-r8";
+} from "./fb.js?v=2026.10.26-r9";
+import * as CFG from "./firebase-config.js?v=2026.10.26-r9";
 const ADMIN_EMAILS = Array.isArray(CFG.ADMIN_EMAILS) ? CFG.ADMIN_EMAILS : [];
-import { esc, fmt, plain, shape, toast, LETTERS, OPT_CLASS, pointsFor, fmtDate, setupNotice } from "./ui.js?v=2026.10.04-r8";
-import { THEMES, THEME_KEYS, themeOf, arena, avatar, gameState } from "./themes.js?v=2026.10.04-r8";
-import { Sound } from "./sound.js?v=2026.10.04-r8";
-import { VERSION } from "./version.js?v=2026.10.04-r8";
-import { isChoice, isCorrect, publicQ, solutionList, newSalt } from "./qtypes.js?v=2026.10.04-r8";
-import { stageSeq, stageSolution } from "./qwidgets.js?v=2026.10.04-r8";
+import { esc, fmt, plain, shape, toast, LETTERS, OPT_CLASS, pointsFor, fmtDate, setupNotice } from "./ui.js?v=2026.10.26-r9";
+import { THEMES, THEME_KEYS, themeOf, arena, avatar, gameState } from "./themes.js?v=2026.10.26-r9";
+import { Sound } from "./sound.js?v=2026.10.26-r9";
+import { VERSION } from "./version.js?v=2026.10.26-r9";
+import { isChoice, isCorrect, publicQ, solutionList, newSalt } from "./qtypes.js?v=2026.10.26-r9";
+import { stageSeq, stageSolution } from "./qwidgets.js?v=2026.10.26-r9";
 // Firestore tidak menerima array di dalam array: pasangan disimpan sebagai {l, r}.
 const normQ = (q) => (q.kind === "cocok" && q.pairs?.length && !Array.isArray(q.pairs[0]) ? { ...q, pairs: q.pairs.map((p) => [p.l, p.r]) } : q);
 
@@ -156,6 +156,7 @@ $tabs.addEventListener("click", async (e) => {
 });
 
 function render() {
+  if (!(tab === "sesi" && rekapPin)) stopRekap();
   [...$tabs.querySelectorAll("[data-tab]")].forEach((t) => t.setAttribute("aria-selected", String(t.dataset.tab === tab)));
   if (tab === "soal") return draft ? renderEditor() : renderQuizList();
   if (tab === "sesi") return rekapPin ? renderRekap(rekapPin) : renderSessions();
@@ -565,24 +566,47 @@ function renderSessions() {
 }
 
 /* ---------------------------------------------------------------- rekap */
-async function renderRekap(pin) {
-  $view.innerHTML = `<p class="muted">Memuat rekap…</p>`;
-  const [sSnap, kSnap] = await Promise.all([getDoc(doc(db, "sessions", pin)), getDoc(doc(db, "sessions", pin, "private", "quiz"))]);
-  if (!sSnap.exists()) { $view.innerHTML = `<p>Sesi tidak ditemukan.</p>`; return; }
-  const s = sSnap.data(), Q = (kSnap.data()?.questions || []).map(normQ), salt = kSnap.data()?.salt;
-  const total = Q.length;
-  let rows = [], perQ = Q.map(() => ({ counts: [0, 0, 0, 0], answered: 0, right: 0 }));
+/* ---------------------------------------------------------------- rekap (realtime) */
+// Rekap berlangganan langsung ke data sesi: nilai, peserta, dan status terbarui sendiri tanpa muat ulang.
+const RK = { pin: null, unsubs: [], s: null, Q: [], salt: null, players: null, answers: null, subs: null, timer: null };
+function stopRekap() { RK.unsubs.forEach((f) => f()); RK.unsubs = []; RK.pin = null; clearTimeout(RK.timer); }
+const scheduleRekap = () => { clearTimeout(RK.timer); RK.timer = setTimeout(drawRekap, 200); };
 
+async function renderRekap(pin) {
+  if (RK.pin === pin && RK.unsubs.length) return drawRekap();
+  stopRekap(); RK.pin = pin; RK.s = null; RK.players = RK.answers = RK.subs = null;
+  $view.innerHTML = `<p class="muted">Memuat rekap…</p>`;
+  let kSnap;
+  try { kSnap = await getDoc(doc(db, "sessions", pin, "private", "quiz")); }
+  catch (e) { $view.innerHTML = `<div class="notice">Gagal memuat rekap (${esc(e.code || e.message)}).</div>`; return; }
+  if (RK.pin !== pin) return;
+  RK.Q = (kSnap.data()?.questions || []).map(normQ); RK.salt = kSnap.data()?.salt;
+  const fail = (e) => { console.error(e); toast("Rekap terputus (" + (e.code || e.message) + "). Menyambung ulang…"); setTimeout(() => { if (RK.pin === pin) { stopRekap(); renderRekap(pin); } }, 3000); };
+  RK.unsubs.push(onSnapshot(doc(db, "sessions", pin), (snap) => {
+    RK.s = snap.exists() ? snap.data() : false;
+    if (RK.s && !RK.unsubs.mode) {
+      RK.unsubs.mode = RK.s.mode;
+      if (RK.s.mode === "live") {
+        RK.unsubs.push(onSnapshot(collection(db, "sessions", pin, "players"), (x) => { RK.players = x.docs.map((d) => ({ uid: d.id, ...d.data() })); scheduleRekap(); }, fail));
+        RK.unsubs.push(onSnapshot(collection(db, "sessions", pin, "answers"), (x) => { RK.answers = x.docs.map((d) => d.data()); scheduleRekap(); }, fail));
+      } else {
+        RK.unsubs.push(onSnapshot(collection(db, "sessions", pin, "submissions"), (x) => { RK.subs = x.docs.map((d) => ({ uid: d.id, ...d.data() })); scheduleRekap(); }, fail));
+      }
+    }
+    scheduleRekap();
+  }, fail));
+}
+
+function computeRows() {
+  const s = RK.s, Q = RK.Q, salt = RK.salt, total = Q.length;
+  let rows = [];
+  const perQ = Q.map(() => ({ counts: [0, 0, 0, 0], answered: 0, right: 0 }));
   if (s.mode === "live") {
-    const [pSnap, aSnap] = await Promise.all([getDocs(collection(db, "sessions", pin, "players")), getDocs(collection(db, "sessions", pin, "answers"))]);
     const byUid = {};
-    pSnap.forEach((d) => { byUid[d.id] = { uid: d.id, ...d.data(), answers: {} }; });
-    aSnap.forEach((d) => { const a = d.data(); if (byUid[a.uid]) byUid[a.uid].answers[a.q] = a.choice; });
+    RK.players.forEach((p) => { byUid[p.uid] = { ...p, answers: {} }; });
+    RK.answers.forEach((a) => { if (byUid[a.uid]) byUid[a.uid].answers[a.q] = a.choice; });
     rows = Object.values(byUid);
-  } else {
-    const subSnap = await getDocs(collection(db, "sessions", pin, "submissions"));
-    rows = subSnap.docs.map((d) => ({ uid: d.id, ...d.data() }));
-  }
+  } else rows = RK.subs.map((r) => ({ ...r }));
   rows.forEach((r) => {
     let right = 0;
     Q.forEach((q, qi) => {
@@ -593,44 +617,69 @@ async function renderRekap(pin) {
     });
     r.right = right; r.nilai = total ? Math.round((right / total) * 1000) / 10 : 0;
   });
-  const nimCount = {}; rows.forEach((r) => { const k = (r.nim || "").trim(); if (k) nimCount[k] = (nimCount[k] || 0) + 1; });
   rows.sort((a, b) => s.mode === "live" ? (b.score || 0) - (a.score || 0) : (a.name || "").localeCompare(b.name || "", "id"));
+  return { rows, perQ, total };
+}
+
+// Sisa waktu mahasiswa ujian mandiri (menit), dengan tambahan waktu khusus & tanggal tutup.
+function endOf(s, r) {
+  const st = r.startedAt?.toMillis?.(); if (!st) return null;
+  let end = st + ((s.durationMin || 0) + (r.extraMin || 0)) * 60e3;
+  if (s.deadline) end = Math.min(end, s.deadline.toMillis());
+  return end;
+}
+
+function drawRekap() {
+  const pin = RK.pin;
+  if (!pin || tab !== "sesi" || rekapPin !== pin) return stopRekap();
+  const s = RK.s;
+  if (s === false) { $view.innerHTML = `<p>Sesi tidak ditemukan.</p>`; return; }
+  if (!s || (s.mode === "live" ? !RK.players || !RK.answers : !RK.subs)) return;
+  if ($dlg.open && $dlg.dataset.keep) return;              // jangan ganggu dialog yang sedang diisi
+  const Q = RK.Q, salt = RK.salt;
+  const { rows, perQ, total } = computeRows();
+  const nimCount = {}; rows.forEach((r) => { const k = (r.nim || "").trim(); if (k) nimCount[k] = (nimCount[k] || 0) + 1; });
   const avg = rows.length ? rows.reduce((t, r) => t + r.nilai, 0) / rows.length : 0;
   const max = rows.reduce((m, r) => Math.max(m, r.nilai), 0);
   const submitted = rows.filter((r) => r.status === "submitted").length;
+  const working = rows.filter((r) => r.status !== "submitted" && (endOf(s, r) ?? 0) > Date.now()).length;
+  const autoN = rows.filter((r) => r.status === "submitted" && r.autoSubmitted).length;
+  const mandiri = s.mode === "mandiri", now = Date.now();
+  const sisa = (r) => { const e = endOf(s, r); if (r.status === "submitted" || !e) return ""; const m = Math.ceil((e - now) / 60e3); return m > 0 ? `<span class="small muted">sisa ${m} mnt</span>` : `<span class="small muted">waktu habis</span>`; };
+  const y = window.scrollY;
 
   $view.innerHTML = `
     <div class="page-head">
       <div class="stack tight"><button class="btn ghost sm" id="back" style="justify-self:start;padding-left:0">← Riwayat sesi</button>
-        <div class="row" style="gap:8px"><h1>${esc(s.title)}</h1>${statusPill(s)}</div>
+        <div class="row" style="gap:8px"><h1>${esc(s.title)}</h1>${statusPill(s)}<span class="pill live-dot" title="Data diperbarui otomatis"><i class="dot"></i>Realtime</span></div>
         <p class="muted small"><span class="mono">PIN ${esc(pin)}</span> · ${s.mode === "live" ? "Live di kelas" : `Mandiri · ${s.durationMin} menit · tutup ${fmtDate(s.deadline)}`} · ${fmtDate(s.createdAt)}</p></div>
       <div class="row">
-        ${s.mode === "mandiri" ? `<button class="btn" id="toggle">${s.status === "open" ? "Tutup ujian" : "Buka lagi"}</button>
+        ${mandiri ? `<button class="btn" id="edit">Ubah sesi / tambah waktu</button><button class="btn" id="toggle">${s.status === "open" ? "Tutup ujian" : "Buka lagi"}</button>
           <button class="btn gold" id="publish">${s.resultsPublished ? "Perbarui nilai" : "Simpan &amp; umumkan nilai"}</button>` : ""}
         ${s.mode === "live" && s.status !== "ended" ? `<button class="btn primary" id="stage">Buka panggung</button>` : ""}
-        ${s.mode === "mandiri" && s.status === "open" ? `<button class="btn primary" id="pinscreen">Tampilkan PIN di layar</button>` : ""}
+        ${mandiri && s.status === "open" ? `<button class="btn primary" id="pinscreen">Tampilkan PIN di layar</button>` : ""}
         <button class="btn" id="csv" ${rows.length ? "" : "disabled"}>Unduh CSV</button>
         <button class="btn danger" id="del">Hapus sesi</button>
       </div>
     </div>
     <div class="stack">
       <div class="stats">
-        <div class="card stat"><div class="v">${rows.length}</div><div class="k">Peserta${s.mode === "mandiri" ? ` · ${submitted} sudah kumpul` : ""}</div></div>
+        <div class="card stat"><div class="v">${rows.length}</div><div class="k">Peserta${mandiri ? ` · ${submitted} sudah kumpul${working ? ` · ${working} sedang mengerjakan` : ""}` : ""}</div></div>
         <div class="card stat"><div class="v">${avg.toFixed(1)}</div><div class="k">Rata-rata nilai (0–100)</div></div>
         <div class="card stat"><div class="v">${max.toFixed(1)}</div><div class="k">Nilai tertinggi</div></div>
         <div class="card stat"><div class="v">${total}</div><div class="k">Jumlah soal</div></div>
       </div>
-      ${s.mode === "mandiri" && s.status === "open" ? `<div class="notice">Mahasiswa masuk di halaman utama dengan PIN <b class="mono">${esc(pin)}</b>. ${s.resultsPublished ? "Nilai sudah diumumkan; tekan <b>Perbarui nilai</b> bila ada yang baru mengumpulkan." : "Nilai baru terlihat oleh mahasiswa setelah Anda menekan <b>Simpan &amp; umumkan nilai</b>."}</div>` : ""}
+      ${mandiri && s.status === "open" ? `<div class="notice">Mahasiswa masuk di halaman utama dengan PIN <b class="mono">${esc(pin)}</b>. Tabel di bawah terbarui otomatis. ${s.resultsPublished ? "Nilai sudah diumumkan; mahasiswa yang baru mengumpulkan baru melihat nilainya setelah Anda menekan <b>Perbarui nilai</b>." : "Nilai baru terlihat oleh mahasiswa setelah Anda menekan <b>Simpan &amp; umumkan nilai</b>."}</div>` : ""}
       <h2>Nilai mahasiswa</h2>
       ${rows.length ? `<div class="tablewrap"><table>
-        <thead><tr><th class="num">#</th><th>Nama</th><th>NIM</th>${s.mode === "live" ? `<th class="num">Poin</th>` : `<th>Status</th>`}<th class="num">Benar</th><th class="num">Nilai</th>${s.mode === "mandiri" ? `<th>Mulai</th><th>Kumpul</th>` : ""}</tr></thead>
+        <thead><tr><th class="num">#</th><th>Nama</th><th>NIM</th>${s.mode === "live" ? `<th class="num">Poin</th>` : `<th>Status</th>`}<th class="num">Benar</th><th class="num">Nilai</th>${mandiri ? `<th>Mulai</th><th>Kumpul</th><th></th>` : ""}</tr></thead>
         <tbody>${rows.map((r, i) => `<tr>
           <td class="num">${i + 1}</td><td>${esc(r.name)}</td>
           <td class="mono">${esc(r.nim || "—")} ${nimCount[(r.nim || "").trim()] > 1 ? `<span class="flag" title="NIM ini muncul lebih dari sekali">ganda</span>` : ""}</td>
-          ${s.mode === "live" ? `<td class="num mono">${(r.score || 0).toLocaleString("id-ID")}</td>` : `<td>${r.status === "submitted" ? "Dikumpulkan" : "Belum kumpul"}</td>`}
+          ${s.mode === "live" ? `<td class="num mono">${(r.score || 0).toLocaleString("id-ID")}</td>` : `<td>${r.status === "submitted" ? (r.autoSubmitted ? "Dikumpulkan (waktu habis)" : "Dikumpulkan") : "Mengerjakan"} ${sisa(r)}${r.extraMin ? ` <span class="pill">+${r.extraMin} mnt</span>` : ""}</td>`}
           <td class="num mono">${r.right}/${total}</td><td class="num mono"><b>${r.nilai.toFixed(1)}</b></td>
-          ${s.mode === "mandiri" ? `<td>${fmtDate(r.startedAt)}</td><td>${fmtDate(r.submittedAt)}</td>` : ""}
-        </tr>`).join("")}</tbody></table></div>` : `<div class="empty"><p>Belum ada mahasiswa yang masuk ke sesi ini.</p></div>`}
+          ${mandiri ? `<td>${fmtDate(r.startedAt)}</td><td>${fmtDate(r.submittedAt)}</td><td><button class="btn sm" data-extra="${esc(r.uid)}">+ Waktu</button></td>` : ""}
+        </tr>`).join("")}</tbody></table></div>` : `<div class="empty"><p>Belum ada mahasiswa yang masuk ke sesi ini. Tabel ini akan terisi sendiri.</p></div>`}
       <h2>Analisis per soal</h2>
       <div class="card">
         ${Q.map((q, qi) => {
@@ -643,22 +692,25 @@ async function renderRekap(pin) {
         }).join("")}
       </div>
     </div>`;
+  window.scrollTo(0, y);
 
-  $view.querySelector("#back").onclick = () => { rekapPin = null; render(); };
+  const ref = doc(db, "sessions", pin);
+  $view.querySelector("#back").onclick = () => { rekapPin = null; stopRekap(); render(); };
   $view.querySelector("#stage")?.addEventListener("click", () => openStage(pin));
   $view.querySelector("#pinscreen")?.addEventListener("click", () => openPinScreen(pin));
-  $view.querySelector("#csv").onclick = () => downloadCSV(s, Q, rows, salt);
+  $view.querySelector("#csv").onclick = () => downloadCSV(s, Q, computeRows().rows, salt);
   $view.querySelector("#del").onclick = async () => {
     if (!(await ask("Hapus sesi ini beserta seluruh jawaban dan nilainya? Unduh CSV dulu bila perlu.", "Hapus permanen", true))) return;
-    await deleteSession(pin, s.mode); rekapPin = null; render(); toast("Sesi dihapus");
+    stopRekap(); await deleteSession(pin, s.mode); rekapPin = null; render(); toast("Sesi dihapus");
   };
   $view.querySelector("#toggle")?.addEventListener("click", async () => {
-    await updateDoc(doc(db, "sessions", pin), { status: s.status === "open" ? "closed" : "open" });
-    renderRekap(pin);
+    try { await updateDoc(ref, { status: s.status === "open" ? "closed" : "open" }); } catch (e) { toast("Gagal: " + (e.code || e.message)); }
   });
+  $view.querySelector("#edit")?.addEventListener("click", () => editSessionDialog(pin, s, autoN));
+  $view.querySelectorAll("[data-extra]").forEach((b) => b.onclick = () => extraTimeDialog(pin, s, RK.subs.find((r) => r.uid === b.dataset.extra)));
   $view.querySelector("#publish")?.addEventListener("click", async () => {
     try {
-      // Ambil ulang semua kiriman terbaru (rekap di layar bisa sudah lama dibuka).
+      // Ambil ulang semua kiriman terbaru dari server sebelum menulis nilai.
       const fresh = (await getDocs(collection(db, "sessions", pin, "submissions"))).docs.map((d) => ({ uid: d.id, ...d.data() }));
       fresh.forEach((r) => { r.right = Q.filter((q, qi) => isCorrect(q, qi, salt, r.answers?.[qi])).length; r.nilai = total ? Math.round((r.right / total) * 1000) / 10 : 0; });
       for (let i = 0; i < fresh.length; i += 400) {
@@ -666,10 +718,97 @@ async function renderRekap(pin) {
         fresh.slice(i, i + 400).forEach((r) => b.update(doc(db, "sessions", pin, "submissions", r.uid), { right: r.right, nilai: r.nilai, total }));
         await b.commit();
       }
-      await updateDoc(doc(db, "sessions", pin), { resultsPublished: true });
-      toast("Nilai tersimpan dan terlihat oleh mahasiswa"); renderRekap(pin);
+      await updateDoc(ref, { resultsPublished: true });
+      toast("Nilai tersimpan dan terlihat oleh mahasiswa");
     } catch (e) { toast("Gagal menyimpan nilai: " + e.code); }
   });
+  // Perbarui tampilan "sisa waktu" tiap 30 detik walau tidak ada data baru.
+  if (mandiri && s.status === "open") { clearTimeout(RK.tickT); RK.tickT = setTimeout(() => { if (RK.pin === pin) drawRekap(); }, 30e3); }
+}
+
+const toLocalInput = (ms) => { const d = new Date(ms); return new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 16); };
+
+// Ubah pengaturan ujian mandiri yang sedang berjalan: judul, durasi, tanggal tutup.
+function editSessionDialog(pin, s, autoN) {
+  $dlg.dataset.keep = "1";
+  $dlg.innerHTML = `<form method="dialog" class="dlg">
+    <div class="stack tight"><span class="eyebrow">Ubah sesi · PIN ${esc(pin)}</span><h2>Pengaturan ujian mandiri</h2>
+      <p class="muted small">Perubahan langsung berlaku di HP mahasiswa yang sedang mengerjakan.</p></div>
+    <label class="field">Judul<input type="text" id="e-title" maxlength="120" value="${esc(s.title || "")}"></label>
+    <div class="grid2">
+      <label class="field">Durasi pengerjaan (menit)<input type="number" id="e-dur" min="1" max="1440" value="${s.durationMin || 30}"></label>
+      <label class="field">Ditutup otomatis pada<input type="datetime-local" id="e-deadline" value="${s.deadline ? toLocalInput(s.deadline.toMillis()) : ""}"></label>
+    </div>
+    <div class="row"><span class="small muted">Tambah cepat:</span>
+      ${[5, 10, 15, 30].map((m) => `<button type="button" class="btn sm" data-plus="${m}">+${m} menit</button>`).join("")}
+      <button type="button" class="btn sm" data-plusdl="60">Tutup +1 jam</button><button type="button" class="btn sm" data-plusdl="1440">Tutup +1 hari</button>
+    </div>
+    ${autoN ? `<label class="check"><input type="checkbox" id="e-reopen">Buka kembali <b>${autoN} mahasiswa</b> yang jawabannya terkumpul otomatis karena waktu habis, supaya bisa melanjutkan dengan waktu baru</label>` : ""}
+    ${s.status !== "open" ? `<label class="check"><input type="checkbox" id="e-open" checked>Buka lagi ujian ini (saat ini ditutup)</label>` : ""}
+    <div class="dlg-foot"><button class="btn" value="no">Batal</button><button class="btn primary" value="ok">Simpan perubahan</button></div>
+  </form>`;
+  const dur = $dlg.querySelector("#e-dur"), dl = $dlg.querySelector("#e-deadline");
+  $dlg.querySelectorAll("[data-plus]").forEach((b) => b.onclick = () => { dur.value = (+dur.value || 0) + +b.dataset.plus; });
+  $dlg.querySelectorAll("[data-plusdl]").forEach((b) => b.onclick = () => { const base = dl.value ? new Date(dl.value).getTime() : Date.now(); dl.value = toLocalInput(Math.max(base, Date.now()) + +b.dataset.plusdl * 6e4); });
+  $dlg.onclose = async () => {
+    delete $dlg.dataset.keep;
+    if ($dlg.returnValue !== "ok") return drawRekap();
+    const upd = {
+      title: $dlg.querySelector("#e-title").value.trim() || s.title,
+      durationMin: Math.min(1440, Math.max(1, Math.round(+dur.value || s.durationMin || 30))),
+      deadline: dl.value ? Timestamp.fromDate(new Date(dl.value)) : null,
+    };
+    if ($dlg.querySelector("#e-open")?.checked) upd.status = "open";
+    if (dl.value && new Date(dl.value).getTime() < Date.now()) return toast("Tanggal tutup sudah lewat. Pilih waktu yang akan datang.");
+    try {
+      await updateDoc(doc(db, "sessions", pin), upd);
+      if ($dlg.querySelector("#e-reopen")?.checked) {
+        const list = RK.subs.filter((r) => r.status === "submitted" && r.autoSubmitted);
+        for (let i = 0; i < list.length; i += 400) {
+          const b = writeBatch(db);
+          list.slice(i, i + 400).forEach((r) => b.update(doc(db, "sessions", pin, "submissions", r.uid), { status: "progress", autoSubmitted: false, submittedAt: null }));
+          await b.commit();
+        }
+      }
+      toast("Pengaturan sesi diperbarui");
+    } catch (e) { toast("Gagal menyimpan: " + (e.code || e.message)); }
+    drawRekap();
+  };
+  $dlg.showModal();
+}
+
+// Tambahan waktu untuk satu mahasiswa (mis. HP mati / kendala teknis).
+function extraTimeDialog(pin, s, r) {
+  if (!r) return;
+  $dlg.dataset.keep = "1";
+  const end = endOf(s, r), left = end ? Math.ceil((end - Date.now()) / 60e3) : null;
+  $dlg.innerHTML = `<form method="dialog" class="dlg">
+    <div class="stack tight"><span class="eyebrow">Tambah waktu</span><h2>${esc(r.name)}</h2>
+      <p class="muted small">NIM ${esc(r.nim || "—")} · ${r.status === "submitted" ? "sudah mengumpulkan" : left > 0 ? `sisa ${left} menit` : "waktu habis"}${r.extraMin ? ` · sudah mendapat tambahan ${r.extraMin} menit` : ""}</p></div>
+    <label class="field">Tambah (menit)<input type="number" id="x-min" min="1" max="600" value="10"></label>
+    <div class="row">${[5, 10, 15, 30].map((m) => `<button type="button" class="btn sm" data-set="${m}">${m} menit</button>`).join("")}</div>
+    ${r.status === "submitted" ? `<label class="check"><input type="checkbox" id="x-reopen" checked>Buka kembali jawabannya supaya ia bisa melanjutkan</label>` : ""}
+    ${s.deadline && end && end >= s.deadline.toMillis() - 6e4 ? `<p class="small" style="color:var(--salah)">Catatan: waktu mahasiswa ini dibatasi tanggal tutup ujian (${esc(fmtDate(s.deadline))}). Perpanjang juga tanggal tutup lewat <b>Ubah sesi</b> bila perlu.</p>` : ""}
+    <div class="dlg-foot"><button class="btn" value="no">Batal</button><button class="btn primary" value="ok">Tambah waktu</button></div>
+  </form>`;
+  const inp = $dlg.querySelector("#x-min");
+  $dlg.querySelectorAll("[data-set]").forEach((b) => b.onclick = () => { inp.value = b.dataset.set; });
+  $dlg.onclose = async () => {
+    delete $dlg.dataset.keep;
+    if ($dlg.returnValue !== "ok") return drawRekap();
+    const add = Math.min(600, Math.max(1, Math.round(+inp.value || 0)));
+    // Bila waktunya sudah habis, tambahan dihitung dari sekarang.
+    const st = r.startedAt?.toMillis?.() ?? Date.now();
+    const usedMin = Math.ceil((Date.now() - st) / 60e3);
+    const base = Math.max((s.durationMin || 0) + (r.extraMin || 0), usedMin);
+    const extraMin = base + add - (s.durationMin || 0);
+    const upd = { extraMin };
+    if ($dlg.querySelector("#x-reopen")?.checked) Object.assign(upd, { status: "progress", autoSubmitted: false, submittedAt: null });
+    try { await updateDoc(doc(db, "sessions", pin, "submissions", r.uid), upd); toast(`Waktu ${r.name} ditambah ${add} menit`); }
+    catch (e) { toast("Gagal: " + (e.code || e.message)); }
+    drawRekap();
+  };
+  $dlg.showModal();
 }
 
 async function deleteSession(pin, mode) {
@@ -819,6 +958,7 @@ function renderStage() {
     </div>`;
   let body = "", foot = "";
   const q = s.current >= 0 ? H.Q[s.current] : null;
+  if (q && s.status === "question" && Number.isFinite(s.question?.time)) q.time = s.question.time;   // waktu bisa ditambah saat soal berjalan
   const th = themeOf(s), themed = th !== "klasik";
 
   if (s.status === "lobby") {
@@ -842,7 +982,7 @@ function renderStage() {
       <div class="qtext${q.kind === "urut" || q.kind === "cocok" ? " sm" : ""}">${fmt(q.text)}</div>
       ${isChoice(q) ? `<div class="tiles">${q.options.map((o, i) => `<div class="tile ${OPT_CLASS[i]}">${shape(i)}<span class="t">${fmt(o)}</span></div>`).join("")}</div>` : stageSeq(publicQ(q, s.current, H.salt))}
       ${themed ? `<div id="arena-mini">${arena(th, s, PL(), { mode: "mini", answeredIds: new Set(H.answers.map((a) => a.uid)) })}</div>` : ""}`;
-    foot = `<span></span><button class="btn light" id="reveal">Tampilkan jawaban</button>`;
+    foot = `<div class="row"><span class="small" style="opacity:.8">Tambah waktu:</span><button class="btn sm" data-addt="10">+10 detik</button><button class="btn sm" data-addt="30">+30 detik</button></div><button class="btn light" id="reveal">Tampilkan jawaban</button>`;
     H.tick = setInterval(() => {
       const left = q.time - (Date.now() - H.qStartLocal) / 1000;
       const t = $stage.querySelector("#tleft"), tm = $stage.querySelector("#timer");
@@ -890,6 +1030,7 @@ function renderStage() {
   $stage.querySelector("#fs").onclick = () => (document.fullscreenElement ? document.exitFullscreen() : $stage.requestFullscreen?.())?.catch?.(() => toast("Layar penuh tidak tersedia di peramban ini"));
   $stage.querySelector("#next")?.addEventListener("click", nextQuestion);
   $stage.querySelector("#reveal")?.addEventListener("click", reveal);
+  $stage.querySelectorAll("[data-addt]").forEach((b) => b.onclick = () => addTime(+b.dataset.addt));
   $stage.querySelector("#rescore")?.addEventListener("click", (e) => { e.target.disabled = true; e.target.textContent = "Menghitung…"; reveal(); });
   $stage.querySelector("#board")?.addEventListener("click", showBoard);
   $stage.querySelector("#rekap")?.addEventListener("click", () => { const p = H.pin; closeStage(); tab = "sesi"; rekapPin = p; draft = null; render(); });
@@ -978,6 +1119,18 @@ async function scoreQuestion(qi, q, ref) {
     correct: isChoice(q) && Number.isInteger(q.correct) ? q.correct : null,
     solution: isChoice(q) ? null : solutionList(q), counts, leaderboard,
   });
+}
+
+// Menambah waktu soal yang sedang tayang. HP mahasiswa ikut memperpanjang hitung mundurnya.
+async function addTime(sec) {
+  const s = H.s; if (s?.status !== "question" || H.revealing) return;
+  const q = H.Q[s.current]; if (!q) return;
+  const elapsed = (Date.now() - H.qStartLocal) / 1000;
+  // Bila waktu sudah habis (masa tenggang), tambahan dihitung dari sekarang.
+  const t = Math.round(Math.max(q.time, elapsed) + sec);
+  q.time = t;
+  try { await updateDoc(doc(db, "sessions", H.pin), { "question.time": t }); toast(`Waktu ditambah ${sec} detik`); }
+  catch (e) { toast("Gagal menambah waktu: " + (e.code || e.message)); }
 }
 
 async function showBoard() {

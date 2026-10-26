@@ -1,6 +1,6 @@
 // AlvQuis — tema panggung & avatar.
 // Semua gambar adalah SVG buatan sendiri (tanpa file gambar luar).
-import { esc } from "./ui.js?v=2026.10.04-r8";
+import { esc } from "./ui.js?v=2026.10.26-r9";
 
 /* ================================================================ TEMA */
 export const THEMES = {

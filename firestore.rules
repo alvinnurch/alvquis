@@ -3,7 +3,8 @@ rules_version = '2';
 // AlvQuis — aturan keamanan Firestore.
 // Salin seluruh isi file ini ke Firebase Console → Firestore → Rules → Publish.
 //
-// Siapa pun yang masuk dengan akun Google dan mengisi profil dosen bisa membuat kuis.
+// Siapa pun bisa MENDAFTAR sebagai dosen dengan akun Google, tetapi baru bisa membuat kuis
+// dan sesi setelah DISETUJUI super admin (field "approved" di /dosen/{uid}).
 // Setiap dosen HANYA bisa membaca dan mengubah bank soal, sesi, jawaban, dan nilai miliknya sendiri.
 // Mahasiswa masuk secara anonim (tanpa akun) dan hanya bisa menulis data dirinya sendiri.
 service cloud.firestore {
@@ -23,10 +24,18 @@ service cloud.firestore {
         'alvinnurch@gmail.com'
       ];
     }
-    // Dosen = akun Google yang sudah mengisi profil di /dosen/{uid} dan tidak diblokir super admin.
+    function myProfile() { return get(/databases/$(database)/documents/dosen/$(request.auth.uid)).data; }
+    // Dosen = akun Google yang sudah mengisi profil di /dosen/{uid}, SUDAH DISETUJUI super admin,
+    // dan tidak diblokir. Super admin sendiri tidak perlu persetujuan.
     function isDosen() {
       return isGoogle() && exists(/databases/$(database)/documents/dosen/$(request.auth.uid))
-        && get(/databases/$(database)/documents/dosen/$(request.auth.uid)).data.get('blocked', false) != true;
+        && myProfile().get('blocked', false) != true
+        && (myProfile().get('approved', false) == true || isAdmin());
+    }
+    function validProfile() {
+      return request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100
+        && request.resource.data.institution is string && request.resource.data.institution.size() > 0 && request.resource.data.institution.size() <= 120
+        && request.resource.data.email == request.auth.token.email;
     }
     function sess(pin) {
       return get(/databases/$(database)/documents/sessions/$(pin)).data;
@@ -40,14 +49,16 @@ service cloud.firestore {
     match /dosen/{uid} {
       allow read: if (isGoogle() && request.auth.uid == uid) || isAdmin();
       allow list, delete: if isAdmin();
-      // Super admin boleh memblokir/membuka blokir (field "blocked").
-      allow update: if isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['blocked', 'blockedAt']);
-      // Dosen mengisi/memperbarui profilnya sendiri (tidak bisa menyentuh status blokir).
-      allow create, update: if isGoogle() && request.auth.uid == uid
+      // Super admin menyetujui / menolak / memblokir dosen.
+      allow update: if isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['approved', 'approvedAt', 'approvedBy', 'blocked', 'blockedAt']);
+      // Pendaftaran: dosen mengisi profilnya sendiri. Status persetujuan TIDAK bisa diisi sendiri.
+      allow create: if isGoogle() && request.auth.uid == uid
         && request.resource.data.keys().hasOnly(['name', 'institution', 'email', 'createdAt'])
-        && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100
-        && request.resource.data.institution is string && request.resource.data.institution.size() > 0 && request.resource.data.institution.size() <= 120
-        && request.resource.data.email == request.auth.token.email;
+        && validProfile();
+      // Dosen boleh memperbarui nama/lembaga, tetapi tidak bisa menyentuh status persetujuan/blokir.
+      allow update: if isGoogle() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'institution', 'email'])
+        && validProfile();
     }
 
     // ---------- Bank soal (berisi kunci jawaban): hanya pemiliknya ----------
@@ -134,17 +145,18 @@ service cloud.firestore {
 
         // Mahasiswa hanya boleh mengubah jawaban & status miliknya sendiri,
         // selama ujian dibuka dan durasinya belum habis (+1 menit toleransi).
+        // Durasi = durationMin sesi + extraMin (tambahan waktu khusus yang hanya bisa diberikan dosen).
         allow update: if (isGoogle() && resource.data.get('ownerUid', '') == request.auth.uid) || ownsSession(pin) || (
           signedIn() && request.auth.uid == uid
           && resource.data.status == 'progress'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answers', 'status', 'updatedAt', 'submittedAt'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answers', 'status', 'updatedAt', 'submittedAt', 'autoSubmitted'])
           && request.resource.data.answers is map
           && request.resource.data.answers.size() <= 300
           && request.resource.data.status in ['progress', 'submitted']
           && request.resource.data.updatedAt == request.time
           && (request.resource.data.status == 'progress' || request.resource.data.submittedAt == request.time)
           && sess(pin).status == 'open'
-          && request.time < resource.data.startedAt + duration.value(sess(pin).durationMin + 1, 'm')
+          && request.time < resource.data.startedAt + duration.value(sess(pin).durationMin + resource.data.get('extraMin', 0) + 1, 'm')
           && (sess(pin).deadline == null || request.time < sess(pin).deadline + duration.value(1, 'm'))
         );
         allow delete: if (isGoogle() && resource.data.get('ownerUid', '') == request.auth.uid) || ownsSession(pin) || isAdmin();

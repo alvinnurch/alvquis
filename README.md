@@ -371,3 +371,16 @@ Sejak versi r7, siapa pun tetap bisa **mendaftar** dengan akun Google, tetapi ba
 **Wajib setelah memperbarui:** salin isi `firestore.rules` yang baru ke Firebase Console → Firestore → Rules → **Publish**. Persetujuan ini dijaga di server oleh rules, bukan hanya di tampilan.
 
 **Dosen yang sudah terdaftar sebelumnya** akan berstatus *Menunggu*. Buka tab Super admin lalu tekan **Setujui semua** supaya mereka bisa langsung bekerja lagi. Sesi yang sedang berjalan tidak terganggu.
+
+## N. Mengubah sesi yang sedang berjalan & rekap realtime
+
+**Rekap selalu terbaru.** Halaman rekap sesi (tab *Sesi & nilai* → pilih sesi) kini berlangganan langsung ke data: peserta baru, jawaban, status "Mengerjakan/Dikumpulkan", sisa waktu, dan nilai berubah sendiri tanpa menekan muat ulang. Tanda **Realtime** di sebelah judul menunjukkan ini aktif.
+
+**Ujian mandiri yang sedang berjalan:**
+- **Ubah sesi / tambah waktu**: ganti judul, durasi (tombol cepat +5/+10/+15/+30 menit), dan tanggal tutup (+1 jam / +1 hari). Berlaku langsung di HP mahasiswa; soal yang sedang dikerjakan tidak ter-reset.
+- Bila ada mahasiswa yang jawabannya **terkumpul otomatis karena waktu habis**, dialog ini menawarkan untuk membuka kembali jawaban mereka agar bisa melanjutkan dengan waktu baru.
+- **+ Waktu** di setiap baris: tambahan waktu khusus untuk satu mahasiswa (mis. HP mati, kendala teknis), dan bila perlu membuka kembali jawabannya yang sudah terkumpul. Tambahan ini dijaga di server (`extraMin`), mahasiswa tidak bisa mengubahnya sendiri.
+
+**Kuis live:** saat soal tayang, tombol **+10 detik** / **+30 detik** di bawah panggung memperpanjang hitung mundur di layar dan di semua HP.
+
+> Setelah memperbarui ke versi ini, **Publish ulang `firestore.rules`** (ada perubahan kecil untuk tambahan waktu per mahasiswa).

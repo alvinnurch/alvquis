@@ -1,12 +1,12 @@
 import {
   configured, auth, db, authReady, signInAnonymously,
   getDocFromServer, doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, deleteField,
-} from "./fb.js?v=2026.10.04-r8";
-import { esc, fmt, shape, toast, LETTERS, OPT_CLASS, shuffledIdx, fmtDate, mmss, setupNotice } from "./ui.js?v=2026.10.04-r8";
-import { THEMES, themeOf, avatar, avatarPicker, meWidget, themedFeedback } from "./themes.js?v=2026.10.04-r8";
-import { isChoice } from "./qtypes.js?v=2026.10.04-r8";
-import { VERSION } from "./version.js?v=2026.10.04-r8";
-import { mountSeq, solutionInline } from "./qwidgets.js?v=2026.10.04-r8";
+} from "./fb.js?v=2026.10.26-r9";
+import { esc, fmt, shape, toast, LETTERS, OPT_CLASS, shuffledIdx, fmtDate, mmss, setupNotice } from "./ui.js?v=2026.10.26-r9";
+import { THEMES, themeOf, avatar, avatarPicker, meWidget, themedFeedback } from "./themes.js?v=2026.10.26-r9";
+import { isChoice } from "./qtypes.js?v=2026.10.26-r9";
+import { VERSION } from "./version.js?v=2026.10.26-r9";
+import { mountSeq, solutionInline } from "./qwidgets.js?v=2026.10.26-r9";
 
 window.__alvOK = true;
 const $view = document.getElementById("view");
@@ -198,7 +198,7 @@ function renderLive() {
   if (!S || !P) return;
   const q = S.question, i = S.current, th = themeOf(S), themed = th !== "klasik";
   // Gambar ulang hanya bila keadaan berubah, agar jawaban yang sedang disusun tidak hilang.
-  const key = JSON.stringify([S.status, i, myAns[i] != null, P.lastQ, P.score, P.rank, P.wrong, S.counts != null, S.questionStartedAt?.toMillis?.() ?? 0]);
+  const key = JSON.stringify([S.status, i, myAns[i] != null, P.lastQ, P.score, P.rank, P.wrong, S.counts != null, S.questionStartedAt?.toMillis?.() ?? 0, q?.time ?? 0]);
   if (key === sig) return; sig = key;
   clearInterval(tick); tick = null;
   if (S.status === "lobby") {
@@ -350,18 +350,36 @@ function startMandiri() {
   order = S.shuffleQ ? shuffledIdx(n, uid + pin) : [...Array(n).keys()];
   cur = store.get("cur:" + pin, 0);
   const lost = (e) => { console.error(e); toast("Koneksi terputus (" + (e.code || e.message) + "). Memuat ulang…"); setTimeout(() => startMandiri(), 3000); };
-  unsubs.push(onSnapshot(doc(db, "sessions", pin), (s) => { S = s.data(); if (!S) return renderJoin("", "Sesi telah dihapus oleh dosen."); renderMandiri(); }, lost));
+  let lastSessKey = "";
+  unsubs.push(onSnapshot(doc(db, "sessions", pin), (s) => {
+    S = s.data(); if (!S) return renderJoin("", "Sesi telah dihapus oleh dosen.");
+    const before = endAt; computeEnd();
+    // Dosen hanya menambah waktu: perbarui jam saja, jangan gambar ulang soal yang sedang dikerjakan.
+    const key = JSON.stringify([S.status, S.resultsPublished, S.title, (S.questions || []).length]);
+    const expiredView = !!$view.querySelector("[data-expired]");
+    if (key !== lastSessKey || expiredView || !before) { lastSessKey = key; renderMandiri(); }
+    else if (endAt !== before) toast("Dosen memperbarui waktu ujian.", 3500);
+  }, lost));
   unsubs.push(onSnapshot(doc(db, "sessions", pin, "submissions", uid), (s) => {
     const first = !SUB; SUB = s.data() || null;
     if (!SUB) return;
     $who.textContent = `${SUB.name} · ${SUB.nim}`;
-    const started = SUB.startedAt?.toMillis?.() ?? Date.now();
-    endAt = started + S.durationMin * 60e3;
-    if (S.deadline) endAt = Math.min(endAt, S.deadline.toMillis());
+    const prevExtra = SUB_extra; computeEnd();
+    if (prevExtra != null && (SUB.extraMin || 0) > prevExtra) toast(`Dosen menambah waktu Anda ${(SUB.extraMin || 0) - prevExtra} menit.`, 4000);
+    SUB_extra = SUB.extraMin || 0;
     // Gambar ulang hanya bila perlu, agar komponen urut/cocok yang sedang diisi tidak ter-reset.
     const st = SUB.status + "|" + (SUB.nilai ?? "");
     if (first || st !== lastSubState) { lastSubState = st; renderMandiri(); }
   }, lost));
+}
+
+let SUB_extra = null;
+// Batas waktu pribadi: durasi ujian (+ tambahan khusus dari dosen), dibatasi tanggal tutup.
+function computeEnd() {
+  if (!S || !SUB) return;
+  const started = SUB.startedAt?.toMillis?.() ?? Date.now();
+  endAt = started + ((S.durationMin || 0) + (SUB.extraMin || 0)) * 60e3;
+  if (S.deadline) endAt = Math.min(endAt, S.deadline.toMillis());
 }
 
 function optOrder(qi) {
@@ -381,7 +399,7 @@ function renderMandiri() {
     return setView(`<div class="big-icon ok">✓</div><h1>Jawaban terkumpul</h1><p class="muted">${done} dari ${n} soal terjawab. Dikumpulkan ${fmtDate(SUB.submittedAt)}.</p><p class="small muted">Nilai akan muncul di halaman ini setelah dosen mengumumkannya. Masukkan PIN yang sama untuk melihatnya nanti.</p>`, true);
   }
   if (S.status !== "open" || Date.now() > endAt + 60e3) {
-    return setView(`<div class="big-icon wait">⏱</div><h1>Waktu habis</h1><p class="muted">Jawaban yang sudah tersimpan tetap dinilai oleh dosen.</p>`, true);
+    return setView(`<div class="big-icon wait" data-expired>⏱</div><h1>${S.status !== "open" ? "Ujian ditutup" : "Waktu habis"}</h1><p class="muted">Jawaban yang sudah tersimpan tetap dinilai oleh dosen. Bila dosen menambah waktu, halaman ini terbuka lagi sendiri.</p>`, true);
   }
   cur = Math.min(Math.max(cur, 0), n - 1); store.set("cur:" + pin, cur);
   const qi = order[cur], q = S.questions[qi], picked = SUB.answers?.[qi];
@@ -442,7 +460,7 @@ function renderMandiri() {
 async function submit(auto) {
   if (submitting) return; submitting = true; clearInterval(tick);
   try {
-    await updateDoc(doc(db, "sessions", pin, "submissions", uid), { status: "submitted", submittedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    await updateDoc(doc(db, "sessions", pin, "submissions", uid), { status: "submitted", submittedAt: serverTimestamp(), updatedAt: serverTimestamp(), autoSubmitted: !!auto });
     if (auto) toast("Waktu habis — jawaban dikumpulkan otomatis");
   } catch (e) {
     console.error(e);
